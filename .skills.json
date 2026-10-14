@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "microsoft-zustand-store-ts": {
+      "version": "1.0.0",
+      "installedAt": "2026-10-14T10:17:35.347Z",
+      "platform": "gemini",
+      "contentHash": "41ccebcf9abc9726bc448ab8e5910a820ac166b46a2b92ae5c0b4606727a402e"
+    }
+  }
+}
