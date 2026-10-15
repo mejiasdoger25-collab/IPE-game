@@ -1,0 +1,120 @@
+{
+  "manifestVersion": "1.1.0",
+  "gameTitle": "Sprint Cero: DevLife RPG",
+  "assetBaseUrl": "/assets/",
+  "license": "CC0 1.0 Universal / OpenGameArt / Liberated Pixel Cup (LPC)",
+  "spritesheets": [
+    {
+      "id": "player_base",
+      "path": "sprites/player_base.png",
+      "frameWidth": 32,
+      "frameHeight": 32,
+      "rows": 12,
+      "columns": 4,
+      "license": "CC0",
+      "description": "Base player character spritesheet with 4-directional walk, idle, and desk typing"
+    },
+    {
+      "id": "npc_elena",
+      "path": "sprites/npc_elena.png",
+      "frameWidth": 32,
+      "frameHeight": 32,
+      "rows": 12,
+      "columns": 4,
+      "license": "CC0",
+      "description": "Elena (Scrum Master) in pink suit with top bun hairstyle"
+    },
+    {
+      "id": "npc_david",
+      "path": "sprites/npc_david.png",
+      "frameWidth": 32,
+      "frameHeight": 32,
+      "rows": 12,
+      "columns": 4,
+      "license": "CC0",
+      "description": "David (Product Owner) in amber shirt with red tie"
+    },
+    {
+      "id": "npc_marcos",
+      "path": "sprites/npc_marcos.png",
+      "frameWidth": 32,
+      "frameHeight": 32,
+      "rows": 12,
+      "columns": 4,
+      "license": "CC0",
+      "description": "Marcos (Senior Backend) in crimson shirt with wireframe glasses"
+    },
+    {
+      "id": "npc_sofia",
+      "path": "sprites/npc_sofia.png",
+      "frameWidth": 32,
+      "frameHeight": 32,
+      "rows": 12,
+      "columns": 4,
+      "license": "CC0",
+      "description": "Sofía (UX/UI Designer) in violet blouse with purple hair"
+    },
+    {
+      "id": "npc_lucas",
+      "path": "sprites/npc_lucas.png",
+      "frameWidth": 32,
+      "frameHeight": 32,
+      "rows": 12,
+      "columns": 4,
+      "license": "CC0",
+      "description": "Lucas (Junior Dev) in mint green casual t-shirt"
+    }
+  ],
+  "tilesets": [
+    {
+      "id": "office_tileset",
+      "path": "tilesets/office_tileset.png",
+      "frameWidth": 32,
+      "frameHeight": 32,
+      "rows": 8,
+      "columns": 8,
+      "license": "CC0",
+      "description": "Office floors (parquet, carpet, glass), walls, desks, dual monitors, coffee machine, server racks, ping-pong table, plants"
+    }
+  ],
+  "maps": [
+    {
+      "key": "startup",
+      "path": "maps/startup.json",
+      "name": "Startup Garage Office",
+      "layers": ["Floor", "Walls_And_Furniture_Base", "Furniture_Top", "Interactables"]
+    },
+    {
+      "key": "corporate",
+      "path": "maps/corporate.json",
+      "name": "Corporate Floor",
+      "layers": ["Floor", "Walls_And_Furniture_Base", "Furniture_Top", "Interactables"]
+    }
+  ],
+  "audio": [
+    {
+      "key": "sfx_key_clack",
+      "type": "SFX",
+      "bus": "sfx",
+      "description": "Mechanical keyboard clack with pitch randomization"
+    },
+    {
+      "key": "sfx_slack_ping",
+      "type": "UI",
+      "bus": "ui",
+      "description": "Notification chime for incoming messages and distractions"
+    },
+    {
+      "key": "sfx_strike_alarm",
+      "type": "ALERT",
+      "bus": "sfx",
+      "description": "Buzzer alert when a strike is issued"
+    },
+    {
+      "key": "sfx_server_alarm",
+      "type": "CRISIS",
+      "bus": "sfx",
+      "description": "Black Friday pre-production server crisis siren"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+[[actions]]
+name = "play"
+path = "office-sim-game/dist/index.html"
+default = true
+
+[viewport]
+width = 960
+height = 640
+orientation = "landscape"
+fullscreen = true

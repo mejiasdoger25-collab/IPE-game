@@ -1,5 +1,5 @@
 // src/data/storyNodes.ts
-import { FiveCMetrics, TimeTool } from '../state/useGameStore';
+import type { FiveCMetrics, TimeTool } from '../state/useGameStore';
 
 export type CommunicationStyle =
   | 'Individualista / Rechazo'

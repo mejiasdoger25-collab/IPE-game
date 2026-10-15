@@ -1,0 +1,13 @@
+# .itch.toml
+# Itch.io manifest for HTML5 browser game configuration
+
+[[actions]]
+name = "play"
+path = "index.html"
+default = true
+
+[viewport]
+width = 960
+height = 640
+orientation = "landscape"
+fullscreen = true
