@@ -1,17 +1,13 @@
 /**
  * src/ui/HUD.tsx
- * Redesigned Top HUD Overlay for DevLife RPG:
- * - Crisp black / deep charcoal 'Inter' typography (#111827 / text-stone-950)
- * - Warm light browns, sand, taupe, and soft stone grays aesthetic
- * - Workday clock (09:00 to 18:00) with visual time progress
- * - Emotional Intelligence (IE) gauge with active climate tier badge
- * - Expandable 5 Cs breakdown ($C_1 \dots C_5$) and Global Cohesion Index ($ICE$)
- * - Procrastination Strikes indicator (0 to 3)
- * - Pomodoro status and quick-launch tools bar (Mesa, Scrum, Skin, Ajustes, Pausa)
+ * HUD Nativo 16-Bit estilo RPG / GBA para Sprint Cero: DevLife RPG.
+ * - Esquina Superior Izquierda: Reloj LCD de Jornada + Cartucho de Sprint + Strikes
+ * - Esquina Superior Derecha: Barras segmentadas de IE y Cohesión (ICE) + Desplegable 5C
+ * - Barra de Acciones Arcade compacta
  */
-
 import React, { useState } from 'react';
 import { useGameStore } from '../state/useGameStore';
+import { AudioManager } from '../core/AudioManager';
 
 export const HUD: React.FC = () => {
   const {
@@ -33,183 +29,222 @@ export const HUD: React.FC = () => {
 
   const [expanded5C, setExpanded5C] = useState<boolean>(false);
 
-  // Format workday clock: 540 -> 09:00, 1080 -> 18:00
+  // Reloj de jornada: 540 -> 09:00, 1080 -> 18:00
   const hours = Math.floor(dayTimeMinutes / 60);
   const minutes = dayTimeMinutes % 60;
   const timeFormatted = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
-  const dayProgressPercent = Math.min(Math.max(((dayTimeMinutes - 540) / (1080 - 540)) * 100, 0), 100);
+  const isLateDay = dayTimeMinutes >= 960; // A partir de las 16:00 parpadea en ámbar/rojo
 
-  const ice = getICE();
+  const ice = Math.round(getICE());
   const velocity = getTeamVelocity();
   const ieClimate = getIEClimate();
 
+  const climateConfig = {
+    EMPATHIC_SYNERGY: { label: 'SINERGIA', color: 'text-emerald-400', dot: 'bg-emerald-400' },
+    PROFESSIONAL_CLIMATE: { label: 'ESTABLE', color: 'text-sky-400', dot: 'bg-sky-400' },
+    HOSTILE_ENVIRONMENT: { label: 'TENSIÓN', color: 'text-rose-400', dot: 'bg-rose-500 animate-ping' },
+  }[ieClimate];
+
   return (
-    <div className="absolute top-0 inset-x-0 z-40 p-3 pointer-events-none font-sans">
-      <div className="max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-3 bg-[#F4F1EA]/95 backdrop-blur-md border border-[#D6CFC2] rounded-2xl p-3 shadow-md pointer-events-auto text-stone-950">
-        {/* Left: Sprint & Workday Clock */}
-        <div className="flex items-center space-x-3">
-          <div className="bg-[#DDD2BE] border border-[#B8A68E] px-3 py-1.5 rounded-xl text-center shadow-xs">
-            <span className="text-[10px] uppercase font-mono text-stone-700 block font-bold leading-none">
-              Sprint
-            </span>
-            <span className="text-base font-extrabold text-stone-950">{currentSprint} / 3</span>
+    <div className="absolute inset-x-0 top-0 z-40 p-3 pointer-events-none select-none">
+      <div className="max-w-[960px] mx-auto flex flex-wrap items-start justify-between gap-2">
+        
+        {/* MÓDULO IZQUIERDO: CARTUCHO DE SPRINT, RELOJ LCD & STRIKES */}
+        <div className="flex items-stretch gap-2 pointer-events-auto">
+          {/* Badge de Sprint */}
+          <div className="rpg-box-dark px-3 py-2 flex flex-col justify-center items-center">
+            <span className="font-arcade text-[8px] text-amber-400 uppercase tracking-wider">SPRINT</span>
+            <span className="font-arcade text-sm text-white mt-1">{currentSprint}/3</span>
           </div>
 
-          <div className="space-y-1">
-            <div className="flex items-center space-x-2">
-              <span className="text-sm font-mono font-bold tracking-wider text-stone-950">
-                🕒 {timeFormatted}
-              </span>
-              <span className="text-[10px] text-stone-600 font-medium">Jornada 09:00-18:00</span>
-              {pomodoroActive && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-[#E87A5D]/20 text-[#9C3820] border border-[#E87A5D]/50 animate-pulse">
-                  🍅 Pomodoro: {pomodoroMinutesRemaining}m (+30% vel)
+          {/* Reloj Digital de Jornada */}
+          <div className="rpg-box-dark px-3.5 py-2 flex items-center gap-3">
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className={`w-2 h-2 ${isPaused ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'}`} />
+                <span className="font-arcade text-[8px] text-slate-400 uppercase">
+                  {isPaused ? 'PAUSA' : 'RELOJ OFICINA'}
                 </span>
-              )}
+              </div>
+              <div className={`font-arcade text-base mt-1 tracking-widest ${isLateDay ? 'text-rose-400 animate-pulse' : 'text-emerald-300'}`}>
+                {timeFormatted}
+              </div>
             </div>
-            {/* Workday Progress bar */}
-            <div className="w-36 h-1.5 bg-stone-300 rounded-full overflow-hidden">
-              <div
-                className={`h-full transition-all duration-300 ${
-                  dayProgressPercent > 80 ? 'bg-[#C25E4A]' : 'bg-[#6F5643]'
-                }`}
-                style={{ width: `${dayProgressPercent}%` }}
-              />
+
+            {/* Indicador de Strikes (Faltas) */}
+            <div className="border-l-2 border-slate-700 pl-3 flex flex-col items-center justify-center">
+              <span className="font-arcade text-[7px] text-slate-400 uppercase mb-1">STRIKES</span>
+              <div className="flex gap-1">
+                {[1, 2, 3].map((num) => (
+                  <div
+                    key={num}
+                    className={`w-3.5 h-3.5 border border-black flex items-center justify-center font-arcade text-[8px] ${
+                      strikes >= num
+                        ? 'bg-rose-600 text-white animate-bounce'
+                        : 'bg-slate-800 text-slate-600'
+                    }`}
+                  >
+                    !
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
+
+          {/* Estado Pomodoro si está activo */}
+          {pomodoroActive && (
+            <div className="rpg-box-dark px-3 py-2 bg-rose-950 border-rose-400 flex items-center gap-2 animate-pulse">
+              <span className="text-base">🍅</span>
+              <div>
+                <span className="font-arcade text-[8px] text-rose-300 block">HIPERFOCO</span>
+                <span className="font-arcade text-xs text-white">{pomodoroMinutesRemaining}M</span>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Center: Emotional Intelligence & 5 Cs Summary */}
-        <div className="flex items-center space-x-4">
-          {/* IE Gauge */}
-          <div className="space-y-1">
-            <div className="flex justify-between items-center text-xs font-semibold text-stone-950">
-              <span className="text-stone-800">Inteligencia Emocional (IE):</span>
-              <span className="font-mono text-stone-950 ml-1.5 font-bold">{emotionalIntelligence}%</span>
+        {/* MÓDULO CENTRAL: BARRAS DE ESTADO RPG (IE & COHESIÓN) */}
+        <div className="rpg-box-dark px-3.5 py-2 pointer-events-auto flex items-center gap-4">
+          {/* Barra de Inteligencia Emocional */}
+          <div className="w-32">
+            <div className="flex justify-between items-center mb-1">
+              <span className="font-arcade text-[8px] text-sky-300">IE (EMPATÍA)</span>
+              <span className="font-arcade text-[9px] text-white">{emotionalIntelligence}%</span>
             </div>
-            <div className="flex items-center space-x-2">
-              <div className="w-28 h-2 bg-stone-300 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-[#C25E4A] via-[#B88746] to-[#4C7C59] transition-all duration-300"
-                  style={{ width: `${emotionalIntelligence}%` }}
-                />
-              </div>
-              <span
-                className={`text-[9px] font-mono px-1.5 py-0.5 rounded font-bold shadow-xs ${
-                  ieClimate === 'EMPATHIC_SYNERGY'
-                    ? 'bg-[#E2EBD8] text-[#2F5233] border border-[#B3C99C]'
-                    : ieClimate === 'PROFESSIONAL_CLIMATE'
-                    ? 'bg-[#E3E8EC] text-[#2C4A6F] border border-[#BAC7D5]'
-                    : 'bg-[#FBE5E1] text-[#8C2D19] border border-[#EBB3A9]'
-                }`}
-              >
-                {ieClimate === 'EMPATHIC_SYNERGY' ? 'Sinergia' : ieClimate === 'PROFESSIONAL_CLIMATE' ? 'Profesional' : 'Hostil'}
-              </span>
+            <div className="w-full h-3 bg-slate-950 border-2 border-slate-600 p-0.5 relative">
+              <div
+                className="h-full bg-gradient-to-r from-rose-500 via-amber-400 to-emerald-400 transition-all duration-300"
+                style={{ width: `${emotionalIntelligence}%` }}
+              />
+              <div className="absolute inset-0 stat-bar-segmented pointer-events-none" />
             </div>
           </div>
 
-          {/* 5 Cs & ICE Button */}
+          {/* Barra de Cohesión de Equipo (ICE) + Botón 5C */}
           <button
-            onClick={() => setExpanded5C(!expanded5C)}
-            className="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-[#E6DEC8] hover:bg-[#D8CCB0] active:bg-[#CBBBA0] border border-[#C2B299] text-xs transition-all shadow-xs cursor-pointer"
+            onClick={() => {
+              AudioManager.playKeyClack();
+              setExpanded5C(!expanded5C);
+            }}
+            className="text-left group cursor-pointer flex items-center gap-2.5 border-l-2 border-slate-700 pl-3"
+            title="Ver desglose de las 5 C del Trabajo en Equipo"
           >
-            <div>
-              <span className="text-[10px] text-stone-700 block text-left font-medium">Cohesión (ICE)</span>
-              <span className="font-mono font-bold text-stone-950">{ice} / 100</span>
+            <div className="w-28">
+              <div className="flex justify-between items-center mb-1">
+                <span className="font-arcade text-[8px] text-amber-300 group-hover:underline">5C EQUIPO</span>
+                <span className="font-arcade text-[9px] text-emerald-300">{velocity}x</span>
+              </div>
+              <div className="w-full h-3 bg-slate-950 border-2 border-slate-600 p-0.5 relative">
+                <div
+                  className="h-full bg-amber-400 transition-all duration-300"
+                  style={{ width: `${ice}%` }}
+                />
+                <div className="absolute inset-0 stat-bar-segmented pointer-events-none" />
+              </div>
             </div>
-            <span className="text-[10px] text-[#4A3B32] font-mono font-bold bg-[#D4C6AA] px-1.5 py-0.5 rounded border border-[#B5A585]">
-              {velocity}x Vel
-            </span>
-            <span className="text-stone-700 text-xs font-bold">{expanded5C ? '▲' : '▼'}</span>
+            <div className="flex flex-col items-center">
+              <span className={`font-arcade text-[7px] ${climateConfig.color}`}>{climateConfig.label}</span>
+              <span className="font-arcade text-[9px] text-slate-300 mt-0.5">{expanded5C ? '▲' : '▼'}</span>
+            </div>
           </button>
         </div>
 
-        {/* Right: Strikes Indicator & Quick Launch Tools */}
-        <div className="flex items-center space-x-3">
-          {/* Strikes (0 to 3) */}
-          <div className="flex items-center space-x-1 px-2.5 py-1 rounded-xl bg-[#EBE7DF] border border-[#D1C9BC] shadow-xs">
-            <span className="text-[10px] text-stone-700 font-bold mr-1">FALTAS:</span>
-            {[1, 2, 3].map((num) => (
-              <span
-                key={num}
-                className={`text-sm font-black ${
-                  strikes >= num
-                    ? 'text-[#C2410C] animate-pulse drop-shadow-xs'
-                    : 'text-stone-300'
-                }`}
-              >
-                ✕
-              </span>
-            ))}
-          </div>
+        {/* MÓDULO DERECHO: BOTONERA DE ACCIONES FÍSICAS */}
+        <div className="flex items-center gap-1.5 pointer-events-auto">
+          {unlockedTools.length > 0 && (
+            <div className="rpg-box-dark px-2 py-1.5 flex items-center gap-1 mr-1" title="Herramientas desbloqueadas">
+              {unlockedTools.map((t) => (
+                <span key={t} className="text-sm">
+                  {t === 'POMODORO' ? '🍅' : t === 'EISENHOWER' ? '📐' : t === 'PARETO' ? '🔍' : '📊'}
+                </span>
+              ))}
+            </div>
+          )}
 
-          {/* Quick Tool Launchers */}
-          <div className="flex items-center space-x-1.5">
-            {unlockedTools.map((t) => (
-              <span
-                key={t}
-                title={`Herramienta Desbloqueada: ${t}`}
-                className="text-[10px] font-mono font-bold text-stone-950 bg-[#E6DEC8] px-1.5 py-0.5 rounded border border-[#C2B299] shadow-xs"
-              >
-                {t === 'POMODORO' ? '🍅' : t === 'EISENHOWER' ? '📊' : t === 'PARETO' ? '⚖️' : '📅'}
-              </span>
-            ))}
-            <button
-              onClick={() => setActiveModal('WORKSTATION')}
-              title="Abrir Estación de Trabajo / Kanban"
-              className="px-2.5 py-1.5 rounded-xl bg-[#E6DEC8] hover:bg-[#D8CCB0] active:bg-[#CBBBA0] text-stone-950 border border-[#C2B299] text-xs font-bold transition-all shadow-xs cursor-pointer"
-            >
-              💻 Mesa
-            </button>
-            <button
-              onClick={() => setActiveModal('SCRUM_BOARD')}
-              title="Abrir Pizarra Scrum / Retrospectiva"
-              className="px-2.5 py-1.5 rounded-xl bg-[#E6DEC8] hover:bg-[#D8CCB0] active:bg-[#CBBBA0] text-stone-950 border border-[#C2B299] text-xs font-bold transition-all shadow-xs cursor-pointer"
-            >
-              📋 Scrum
-            </button>
-            <button
-              onClick={() => setActiveModal('SKIN_CUSTOMIZER')}
-              title="Personalizar Skin o Cambiar Mapa"
-              className="px-2.5 py-1.5 rounded-xl bg-[#E6DEC8] hover:bg-[#D8CCB0] active:bg-[#CBBBA0] text-stone-950 border border-[#C2B299] text-xs font-bold transition-all shadow-xs cursor-pointer"
-            >
-              🎨 Skin
-            </button>
-            <button
-              onClick={() => setActiveModal('SETTINGS')}
-              title="Ajustes de Sonido y Guardado"
-              className="px-2.5 py-1.5 rounded-xl bg-[#E5E5E0] hover:bg-[#D6D6CF] active:bg-[#C8C8BE] text-stone-950 border border-stone-300 text-xs font-bold transition-all shadow-xs cursor-pointer"
-            >
-              ⚙️
-            </button>
-            <button
-              onClick={() => togglePause()}
-              title={isPaused ? 'Reanudar' : 'Pausar'}
-              className="px-2.5 py-1.5 rounded-xl bg-[#E5E5E0] hover:bg-[#D6D6CF] active:bg-[#C8C8BE] text-stone-950 border border-stone-300 text-xs font-bold transition-all shadow-xs cursor-pointer"
-            >
-              {isPaused ? '▶' : '⏸'}
-            </button>
-          </div>
+          <button
+            onClick={() => {
+              AudioManager.playKeyClack();
+              setActiveModal('WORKSTATION');
+            }}
+            className="rpg-btn px-2.5 py-2 font-arcade text-[9px] cursor-pointer flex items-center gap-1"
+          >
+            <span>💻</span>
+            <span className="hidden sm:inline">MESA</span>
+          </button>
+
+          <button
+            onClick={() => {
+              AudioManager.playKeyClack();
+              setActiveModal('SCRUM_BOARD');
+            }}
+            className="rpg-btn px-2.5 py-2 font-arcade text-[9px] cursor-pointer flex items-center gap-1"
+          >
+            <span>📋</span>
+            <span className="hidden sm:inline">SCRUM</span>
+          </button>
+
+          <button
+            onClick={() => {
+              AudioManager.playKeyClack();
+              setActiveModal('SKIN_CUSTOMIZER');
+            }}
+            className="rpg-btn px-2.5 py-2 font-arcade text-[9px] cursor-pointer flex items-center gap-1"
+          >
+            <span>👕</span>
+            <span className="hidden sm:inline">SKIN</span>
+          </button>
+
+          <button
+            onClick={() => {
+              AudioManager.playKeyClack();
+              setActiveModal('SETTINGS');
+            }}
+            className="rpg-btn px-2.5 py-2 font-arcade text-[9px] cursor-pointer"
+            title="Ajustes y Guardado"
+          >
+            ⚙️
+          </button>
+
+          <button
+            onClick={() => {
+              AudioManager.playKeyClack();
+              togglePause();
+            }}
+            className="rpg-btn px-2.5 py-2 font-arcade text-[9px] cursor-pointer"
+            title={isPaused ? 'Reanudar' : 'Pausar'}
+          >
+            {isPaused ? '▶' : '⏸'}
+          </button>
         </div>
       </div>
 
-      {/* Expanded 5 Cs Drawer Panel */}
+      {/* PANEL DESPLEGABLE DE LAS 5 C (ESTILO FICHA DE STATS RPG) */}
       {expanded5C && (
-        <div className="max-w-xl mx-auto mt-2 p-3 bg-[#F4F1EA]/95 backdrop-blur-md border border-[#D6CFC2] rounded-xl shadow-lg pointer-events-auto text-xs grid grid-cols-5 gap-2 text-stone-950">
-          {Object.entries(fiveCs).map(([k, v]) => (
-            <div key={k} className="p-2 rounded-lg bg-[#EBE7DF] border border-[#D1C9BC] text-center space-y-1">
-              <span className="text-[10px] text-stone-700 block uppercase font-mono font-bold truncate">
-                {k.slice(0, 4)}
-              </span>
-              <span className="font-mono font-bold text-stone-950">{v}%</span>
-              <div className="w-full h-1 bg-stone-300 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-[#6F5643] transition-all duration-300"
-                  style={{ width: `${v}%` }}
-                />
+        <div className="max-w-xl mx-auto mt-2 rpg-box-dark p-3 pointer-events-auto animate-fade-in">
+          <div className="flex justify-between items-center border-b-2 border-slate-700 pb-1.5 mb-2">
+            <span className="font-arcade text-[9px] text-amber-300">
+              ESTADÍSTICAS DE LAS 5 C DEL TRABAJO EN EQUIPO (MEDIA ICE: {ice}%)
+            </span>
+            <button
+              onClick={() => setExpanded5C(false)}
+              className="font-arcade text-[9px] text-slate-400 hover:text-white cursor-pointer"
+            >
+              [X]
+            </button>
+          </div>
+          <div className="grid grid-cols-5 gap-2">
+            {Object.entries(fiveCs).map(([k, v]) => (
+              <div key={k} className="bg-slate-900 border-2 border-slate-700 p-2 text-center">
+                <span className="font-arcade text-[7px] text-slate-400 block uppercase truncate">
+                  {k.slice(0, 6)}
+                </span>
+                <span className="font-arcade text-xs text-white block my-1">{v}%</span>
+                <div className="w-full h-1.5 bg-slate-950 border border-slate-700">
+                  <div className="h-full bg-emerald-400" style={{ width: `${v}%` }} />
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
     </div>

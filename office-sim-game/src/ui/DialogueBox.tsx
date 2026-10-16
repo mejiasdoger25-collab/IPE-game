@@ -1,47 +1,52 @@
 /**
  * src/ui/DialogueBox.tsx
- * Visual Novel & Dialogue UI Component for DevLife RPG.
- * Implements:
- * - Emotional self-regulation pre-step (Box Breathing) via DialogueRunner.isSelfRegulationRequired()
- * - Typewriter reveal with skippable animation (first press completes line, second advances)
- * - Protagonist internal monologue card with trade-off reflections
- * - Communication style technique badges (Empatía, Asertividad, Negociación Integrativa)
- * - Visual feedback delta toasts (+IE, +C5, -Time)
- * - 200-line conversation history backlog drawer
- * - Keyboard navigation (1-4, Enter, Space, Escape)
- * - Harmonized with warm light brown, stone cream, and taupe editorial aesthetic with Inter black typography
+ * Sistema de Diálogo Retro 16-Bit con:
+ * 1. Retrato en vivo de la Skin del NPC arriba + Bocadillo de cómic pixel-art
+ * 2. Selector de decisiones tipo "Rosco / Pasapalabra" controlado con Flechas (Izquierda/Derecha)
+ * 3. Cero spoilers de estadísticas ni etiquetas de respuesta
  */
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useGameStore } from '../state/useGameStore';
 import { useQuestStore } from '../state/useQuestStore';
 import { DialogueRunner, type ChoiceExecutionResult } from '../core/DialogueRunner';
 import { STORY_NODES, type StoryNode, type DialogueOption } from '../data/storyNodes';
+import { SkinBuilder } from '../core/SkinBuilder';
 import { AudioManager } from '../core/AudioManager';
 import { SaveManager } from '../core/SaveManager';
+import type { SkinConfig } from '../types/game';
 
-export interface BacklogEntry {
-  speaker: string;
-  text: string;
-  choiceMade?: string;
-  timestamp: string;
+/**
+ * Resuelve la SkinConfig del personaje que habla según el nombre en el nodo
+ */
+function resolveSpeakerSkin(speakerName: string, playerSkin: SkinConfig): SkinConfig {
+  const lower = speakerName.toLowerCase();
+  if (lower.includes('elena')) return SkinBuilder.NPC_SKINS.elena_scrum;
+  if (lower.includes('david')) return SkinBuilder.NPC_SKINS.david_po;
+  if (lower.includes('marcos')) return SkinBuilder.NPC_SKINS.marcos_senior;
+  if (lower.includes('sof')) return SkinBuilder.NPC_SKINS.sofia_ux;
+  if (lower.includes('lucas')) return SkinBuilder.NPC_SKINS.lucas_junior;
+  return playerSkin;
 }
 
+const OPTION_LETTERS = ['A', 'B', 'C', 'D', 'E'];
+
 export const DialogueBox: React.FC = () => {
-  const { activeModal, closeModal, getEffectiveIE, getIEClimate, updateIE } = useGameStore();
+  const { activeModal, closeModal, updateIE, skinConfig } = useGameStore();
   const { activeStoryNodeId, setActiveStoryNode } = useQuestStore();
 
   const [currentNode, setCurrentNode] = useState<StoryNode | null>(null);
   const [displayedText, setDisplayedText] = useState<string>('');
   const [isTyping, setIsTyping] = useState<boolean>(false);
-  const [showMonologue, setShowMonologue] = useState<boolean>(true);
   const [showOptions, setShowOptions] = useState<boolean>(false);
+  const [selectedIndex, setSelectedIndex] = useState<number>(0);
   const [feedback, setFeedback] = useState<ChoiceExecutionResult | null>(null);
-  const [backlogOpen, setBacklogOpen] = useState<boolean>(false);
-  const [backlog, setBacklog] = useState<BacklogEntry[]>([]);
-  const [coachMode, setCoachMode] = useState<boolean>(true);
 
-  // Self-regulation state for tense scenes
+  // Estado de animación para el retrato pixel-art del hablante
+  const [portraitFrame, setPortraitFrame] = useState<number>(0);
+  const portraitCanvasRef = useRef<HTMLCanvasElement>(null);
+  const playerPreviewCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Estado de autorregulación emocional (Respiración Cuadrada en escenas tensas)
   const [needsSelfRegulation, setNeedsSelfRegulation] = useState<boolean>(false);
   const [regulationPhase, setRegulationPhase] = useState<'idle' | 'inhale' | 'hold' | 'exhale' | 'done'>('idle');
   const [regulationSeconds, setRegulationSeconds] = useState<number>(4);
@@ -49,18 +54,38 @@ export const DialogueBox: React.FC = () => {
   const fullTextRef = useRef<string>('');
   const typingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Sync current story node from store or fallback
+  // Animación del sprite en el retrato (hablando mientras el texto avanza)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setPortraitFrame((prev) => (prev + 1) % 4);
+    }, 200);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Pintar el retrato del NPC hablante y del jugador en sus canvas
+  useEffect(() => {
+    if (!currentNode) return;
+    const speakerSkin = resolveSpeakerSkin(currentNode.speaker, skinConfig);
+    if (portraitCanvasRef.current) {
+      const col = isTyping ? portraitFrame : 0;
+      SkinBuilder.renderPreviewFrame(portraitCanvasRef.current, speakerSkin, 2, col, 3);
+    }
+    if (playerPreviewCanvasRef.current) {
+      SkinBuilder.renderPreviewFrame(playerPreviewCanvasRef.current, skinConfig, 2, 0, 2);
+    }
+  }, [currentNode, portraitFrame, isTyping, skinConfig, showOptions]);
+
+  // Cargar nodo de historia activo
   useEffect(() => {
     if (activeModal !== 'DIALOGUE') return;
     const nodeId = activeStoryNodeId || 'scene_1_1_daily';
     const node = STORY_NODES[nodeId] || null;
     if (node) {
       setCurrentNode(node);
-      setShowMonologue(true);
       setShowOptions(false);
+      setSelectedIndex(0);
       setFeedback(null);
 
-      // Check if emotional self-regulation is required
       const req = DialogueRunner.isSelfRegulationRequired(node);
       setNeedsSelfRegulation(req);
       setRegulationPhase('idle');
@@ -68,19 +93,6 @@ export const DialogueBox: React.FC = () => {
       const resolvedLine = DialogueRunner.getSpeakerLine(node);
       fullTextRef.current = resolvedLine;
       startTypewriter(resolvedLine);
-
-      // Add to backlog
-      setBacklog((prev) => {
-        const next = [
-          ...prev,
-          {
-            speaker: node.speaker,
-            text: resolvedLine,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          },
-        ];
-        return next.slice(-200);
-      });
     }
   }, [activeModal, activeStoryNodeId]);
 
@@ -88,12 +100,12 @@ export const DialogueBox: React.FC = () => {
     if (typingTimerRef.current) clearInterval(typingTimerRef.current);
     setDisplayedText('');
     setIsTyping(true);
-
     let idx = 0;
+
     typingTimerRef.current = setInterval(() => {
       idx++;
       setDisplayedText(text.slice(0, idx));
-      if (idx % 4 === 0) {
+      if (idx % 3 === 0) {
         AudioManager.playKeyClack();
       }
       if (idx >= text.length) {
@@ -104,16 +116,17 @@ export const DialogueBox: React.FC = () => {
     }, 18);
   };
 
-  const skipTypewriter = () => {
+  const skipTypewriter = useCallback(() => {
     if (isTyping) {
       if (typingTimerRef.current) clearInterval(typingTimerRef.current);
       setDisplayedText(fullTextRef.current);
       setIsTyping(false);
       setShowOptions(true);
     }
-  };
+  }, [isTyping]);
 
   const handleStartRegulation = () => {
+    AudioManager.playKeyClack();
     setRegulationPhase('inhale');
     setRegulationSeconds(4);
 
@@ -121,23 +134,18 @@ export const DialogueBox: React.FC = () => {
       setRegulationSeconds((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          // Transition to hold
           setRegulationPhase('hold');
           setRegulationSeconds(4);
-
           const holdTimer = setInterval(() => {
             setRegulationSeconds((hPrev) => {
               if (hPrev <= 1) {
                 clearInterval(holdTimer);
-                // Transition to exhale
                 setRegulationPhase('exhale');
                 setRegulationSeconds(4);
-
                 const exhaleTimer = setInterval(() => {
                   setRegulationSeconds((ePrev) => {
                     if (ePrev <= 1) {
                       clearInterval(exhaleTimer);
-                      // Done!
                       setRegulationPhase('done');
                       updateIE(10);
                       AudioManager.playNotificationPing();
@@ -147,13 +155,11 @@ export const DialogueBox: React.FC = () => {
                     return ePrev - 1;
                   });
                 }, 1000);
-
                 return 0;
               }
               return hPrev - 1;
             });
           }, 1000);
-
           return 0;
         }
         return prev - 1;
@@ -164,33 +170,16 @@ export const DialogueBox: React.FC = () => {
   const handleSelectOption = useCallback(
     (option: DialogueOption) => {
       if (!currentNode) return;
-
-      AudioManager.playKeyClack();
+      AudioManager.playNotificationPing();
       const result = DialogueRunner.executeOption(currentNode.id, option);
       setFeedback(result);
       setShowOptions(false);
-
-      // Auto-save progress
       SaveManager.autoSave();
-
-      // Record choice in backlog
-      setBacklog((prev) => {
-        const next = [
-          ...prev,
-          {
-            speaker: 'Tú',
-            text: option.label,
-            choiceMade: `[${option.styleTag}]`,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          },
-        ];
-        return next.slice(-200);
-      });
     },
     [currentNode]
   );
 
-  const handleAdvanceConsequence = () => {
+  const handleAdvanceConsequence = useCallback(() => {
     AudioManager.playKeyClack();
     if (!feedback) return;
     if (feedback.nextNodeId) {
@@ -199,283 +188,291 @@ export const DialogueBox: React.FC = () => {
       closeModal();
       setActiveStoryNode(null);
     }
-  };
+  }, [feedback, setActiveStoryNode, closeModal]);
 
-  // Keyboard navigation: 1-4 for options, Space/Enter to skip typewriter or advance
+  // Navegación por teclado estilo Pasapalabra / Arcade (Flechas Izq/Der/Arr/Aba + Enter/Espacio)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (activeModal !== 'DIALOGUE') return;
+      if (activeModal !== 'DIALOGUE' || !currentNode) return;
 
       if (e.key === 'Escape') {
-        if (backlogOpen) setBacklogOpen(false);
-        else closeModal();
+        closeModal();
         return;
       }
 
-      if (e.key === ' ' || e.key === 'Enter') {
-        if (isTyping) {
-          skipTypewriter();
-        } else if (feedback) {
-          handleAdvanceConsequence();
-        }
+      if (isTyping && (e.key === ' ' || e.key === 'Enter')) {
+        e.preventDefault();
+        skipTypewriter();
+        return;
       }
 
-      // 1-4 choice numbers
-      if (showOptions && currentNode && !feedback && !needsSelfRegulation) {
-        const num = parseInt(e.key, 10);
-        if (num >= 1 && num <= currentNode.options.length) {
-          handleSelectOption(currentNode.options[num - 1]);
+      if (feedback && (e.key === ' ' || e.key === 'Enter')) {
+        e.preventDefault();
+        handleAdvanceConsequence();
+        return;
+      }
+
+      if (showOptions && !feedback && !needsSelfRegulation) {
+        const total = currentNode.options.length;
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'd' || e.key === 's') {
+          e.preventDefault();
+          AudioManager.playKeyClack();
+          setSelectedIndex((prev) => (prev + 1) % total);
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'a' || e.key === 'w') {
+          e.preventDefault();
+          AudioManager.playKeyClack();
+          setSelectedIndex((prev) => (prev - 1 + total) % total);
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          handleSelectOption(currentNode.options[selectedIndex]);
         }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeModal, isTyping, showOptions, currentNode, feedback, backlogOpen, needsSelfRegulation, handleSelectOption]);
+  }, [
+    activeModal,
+    currentNode,
+    isTyping,
+    showOptions,
+    feedback,
+    needsSelfRegulation,
+    selectedIndex,
+    skipTypewriter,
+    handleSelectOption,
+    handleAdvanceConsequence,
+    closeModal,
+  ]);
 
   if (activeModal !== 'DIALOGUE' || !currentNode) return null;
 
-  const ieClimate = getIEClimate();
-  const ieScore = getEffectiveIE();
+  const activeOption = currentNode.options[selectedIndex] || currentNode.options[0];
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end p-4 md:p-8 bg-stone-900/60 backdrop-blur-xs font-sans select-none">
-      {/* Backlog Drawer */}
-      {backlogOpen && (
-        <div className="fixed inset-y-0 right-0 w-full max-w-md bg-[#F4F1EA] border-l border-[#D6CFC2] p-6 shadow-2xl z-50 flex flex-col space-y-4 text-stone-950">
-          <div className="flex justify-between items-center border-b border-[#D6CFC2] pb-3">
-            <h3 className="font-extrabold text-stone-950 text-sm">📜 Historial de Conversación (Backlog)</h3>
-            <button
-              onClick={() => setBacklogOpen(false)}
-              className="text-stone-500 hover:text-stone-950 text-sm font-bold cursor-pointer"
-            >
-              ✕
-            </button>
+    <div className="fixed inset-0 z-50 flex flex-col justify-between p-4 md:p-6 bg-slate-950/75 select-none overflow-y-auto">
+      {/* PARTE 1 (ARRIBA): RETRATO CON SKIN DEL NPC + BOCADILLO DE DIÁLOGO */}
+      <div className="max-w-3xl w-full mx-auto mt-2 flex flex-col items-center">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="relative rpg-box-dark p-1.5 bg-[#262b44]">
+            <canvas
+              ref={portraitCanvasRef}
+              className="w-20 h-20 object-contain"
+              style={{ imageRendering: 'pixelated' }}
+            />
+            {isTyping && (
+              <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-emerald-400 border-2 border-black animate-bounce" />
+            )}
           </div>
-          <div className="flex-1 overflow-y-auto space-y-3 pr-1 text-xs">
-            {backlog.map((entry, idx) => (
-              <div key={idx} className="p-3 rounded-xl bg-[#EBE7DF] border border-[#D1C9BC] space-y-1">
-                <div className="flex justify-between text-[10px] text-stone-600 font-bold">
-                  <span>{entry.speaker}</span>
-                  <span className="font-mono">{entry.timestamp}</span>
-                </div>
-                <p className="text-stone-900 leading-relaxed">{entry.text}</p>
-                {entry.choiceMade && (
-                  <span className="inline-block text-[10px] font-mono text-[#4A3B32] bg-[#DDD2BE] px-1.5 py-0.5 rounded font-bold">
-                    {entry.choiceMade}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
-      {/* Main Dialogue Box Card */}
-      <div className="max-w-4xl w-full mx-auto bg-[#FDFBF7] border-2 border-[#C2B299] rounded-3xl p-6 md:p-8 shadow-2xl space-y-4 text-stone-950">
-        {/* Top Header: Speaker, IE badge, Coach toggle, Backlog */}
-        <div className="flex flex-wrap justify-between items-center border-b border-[#EBE7DF] pb-3 gap-2">
-          <div className="flex items-center space-x-3">
-            <span className="px-3.5 py-1.5 rounded-xl bg-[#DDD2BE] text-stone-950 font-black text-sm border border-[#B8A68E] shadow-xs">
+          <div className="rpg-box-dark px-4 py-2">
+            <span className="font-arcade text-xs md:text-sm text-amber-300 block">
               {currentNode.speaker}
             </span>
-            <span className="text-xs text-stone-600 font-bold hidden sm:inline">
-              {currentNode.title}
+            <span className="font-dialogue text-base text-slate-300 block">
+              {currentNode.speakerRole}
             </span>
-          </div>
-
-          <div className="flex items-center space-x-2 text-xs">
-            {/* IE Climate Badge */}
-            <span
-              className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold shadow-xs ${
-                ieClimate === 'EMPATHIC_SYNERGY'
-                  ? 'bg-[#E2EBD8] text-[#2F5233] border border-[#B3C99C]'
-                  : ieClimate === 'PROFESSIONAL_CLIMATE'
-                  ? 'bg-[#E3E8EC] text-[#2C4A6F] border border-[#BAC7D5]'
-                  : 'bg-[#FBE5E1] text-[#8C2D19] border border-[#EBB3A9]'
-              }`}
-            >
-              Clima: {ieClimate === 'EMPATHIC_SYNERGY' ? 'Sinergia (+25%)' : ieClimate === 'PROFESSIONAL_CLIMATE' ? 'Profesional' : 'Hostil'}
-            </span>
-
-            <button
-              onClick={() => setCoachMode(!coachMode)}
-              className={`px-2.5 py-1 rounded-xl text-[11px] font-bold border transition-all cursor-pointer ${
-                coachMode
-                  ? 'bg-[#E6DEC8] text-stone-950 border-[#C2B299]'
-                  : 'bg-stone-100 text-stone-500 border-stone-200'
-              }`}
-            >
-              🎓 Coach Soft-Skills: {coachMode ? 'ON' : 'OFF'}
-            </button>
-
-            <button
-              onClick={() => setBacklogOpen(true)}
-              className="px-2.5 py-1 rounded-xl bg-[#EBE7DF] hover:bg-[#DDD2BE] text-stone-800 text-[11px] font-bold border border-[#D1C9BC] transition-all cursor-pointer"
-            >
-              📜 Backlog
-            </button>
           </div>
         </div>
 
-        {/* Protagonist Psychological Monologue Card */}
-        {showMonologue && currentNode.internalThought && (
-          <div className="p-3 rounded-2xl bg-[#F5F1E8] border border-[#D6CFC2] text-xs space-y-1 shadow-xs">
-            <div className="flex justify-between items-center text-[10px] font-bold text-[#6F5643]">
-              <span className="flex items-center space-x-1">
-                <span>🧠 Pensamiento Interno (IE: {ieScore}%)</span>
-              </span>
-              <button
-                onClick={() => setShowMonologue(false)}
-                className="text-stone-400 hover:text-stone-700 cursor-pointer"
-              >
-                Ocultar
-              </button>
-            </div>
-            <p className="text-stone-800 italic leading-relaxed">
-              "{currentNode.internalThought}"
-            </p>
-          </div>
-        )}
-
-        {/* Speaker Dialogue Line */}
         <div
           onClick={skipTypewriter}
-          className="text-sm md:text-base font-medium text-stone-950 leading-relaxed min-h-[50px] cursor-pointer"
+          className="relative w-full rpg-box-cream p-5 md:p-6 cursor-pointer"
         >
-          {displayedText}
-          {isTyping && <span className="animate-pulse font-bold text-[#6F5643]"> ▍</span>}
-        </div>
+          <div
+            className="absolute -top-3 left-1/2 -translate-x-1/2 w-0 h-0"
+            style={{
+              borderLeft: '12px solid transparent',
+              borderRight: '12px solid transparent',
+              borderBottom: '12px solid #2b2118',
+            }}
+          />
+          <div
+            className="absolute -top-[9px] left-1/2 -translate-x-1/2 w-0 h-0"
+            style={{
+              borderLeft: '9px solid transparent',
+              borderRight: '9px solid transparent',
+              borderBottom: '9px solid #f4eed7',
+            }}
+          />
 
-        {/* EMOTIONAL SELF-REGULATION / BOX BREATHING PRE-STEP */}
-        {needsSelfRegulation && !isTyping && (
-          <div className="p-4 rounded-2xl bg-[#FBE5E1] border-2 border-[#EBB3A9] space-y-3 text-center">
-            <div className="flex items-center justify-center space-x-2 text-[#8C2D19] font-extrabold text-sm">
-              <span>⚠️ Autorregulación Emocional Requerida</span>
+          <p className="font-dialogue text-2xl md:text-3xl text-stone-950 leading-snug min-h-[72px]">
+            {displayedText}
+            {isTyping && <span className="inline-block w-3 h-6 bg-stone-900 ml-1 animate-pulse" />}
+          </p>
+
+          {!isTyping && currentNode.internalThought && !feedback && (
+            <div className="mt-3 pt-2.5 border-t-2 border-dashed border-[#b8ab8e] flex items-center gap-2 text-stone-700">
+              <span className="font-arcade text-[9px] bg-[#2b2118] text-[#f4eed7] px-2 py-0.5 shrink-0">
+                INTUICIÓN
+              </span>
+              <p className="font-dialogue text-lg italic leading-tight">
+                "{currentNode.internalThought}"
+              </p>
             </div>
-            <p className="text-xs text-stone-700 max-w-md mx-auto">
-              La tensión en la sala es crítica y tu Inteligencia Emocional es baja. Si reaccionas impulsivamente, empeorarás el conflicto.
-              Realiza una técnica de <strong>Respiración Cuadrada (Box Breathing)</strong> antes de responder.
-            </p>
+          )}
 
+          {isTyping && (
+            <div className="text-right mt-2">
+              <span className="font-arcade text-[8px] text-stone-600 animate-pulse">
+                [ESPACIO] SALTAR ANIMACIÓN ▶▶
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* PARTE 2 (ABAJO): ROSCO / RULETA RETRO "PASAPALABRA" CON FLECHAS */}
+      <div className="max-w-3xl w-full mx-auto mb-2 mt-4">
+        {needsSelfRegulation && !isTyping && (
+          <div className="rpg-box-dark p-5 text-center space-y-3 border-rose-500">
+            <div className="font-arcade text-xs text-rose-400">
+              ⚠️ ¡PULSO ACELERADO! AUTORREGULACIÓN EMOCIONAL REQUERIDA
+            </div>
+            <p className="font-dialogue text-xl text-slate-200 max-w-lg mx-auto">
+              La tensión en la sala es máxima. Respira hondo antes de contestar para no perder los papeles.
+            </p>
             {regulationPhase === 'idle' && (
               <button
                 onClick={handleStartRegulation}
-                className="px-6 py-2 rounded-xl bg-[#6F5643] hover:bg-[#5C4736] text-white font-bold text-xs shadow-md cursor-pointer transition-all"
+                className="rpg-btn px-5 py-2.5 font-arcade text-[10px] cursor-pointer"
               >
-                Iniciar Respiración Cuadrada (12s)
+                RESPIRACIÓN CUADRADA (12S)
               </button>
             )}
-
             {regulationPhase === 'inhale' && (
-              <div className="text-base font-bold text-[#2C4A6F] animate-pulse">
-                🌬️ Inhala profundamente... {regulationSeconds}s
+              <div className="font-arcade text-sm text-sky-300 animate-pulse">
+                🌬️ INHALA... {regulationSeconds}S
               </div>
             )}
             {regulationPhase === 'hold' && (
-              <div className="text-base font-bold text-[#7C5117] animate-pulse">
-                🧘‍♂️ Mantén el aire... {regulationSeconds}s
+              <div className="font-arcade text-sm text-amber-300 animate-pulse">
+                ⏸️ MANTÉN EL AIRE... {regulationSeconds}S
               </div>
             )}
             {regulationPhase === 'exhale' && (
-              <div className="text-base font-bold text-[#2F5233] animate-pulse">
-                💨 Exhala suavemente... {regulationSeconds}s
-              </div>
-            )}
-            {regulationPhase === 'done' && (
-              <div className="text-xs font-bold text-[#2F5233]">
-                ✓ ¡Mente calmada! (+10 IE). Ahora puedes elegir tu respuesta asertiva.
+              <div className="font-arcade text-sm text-emerald-300 animate-pulse">
+                🍃 EXHALA DESPACIO... {regulationSeconds}S
               </div>
             )}
           </div>
         )}
 
-        {/* Dialogue Branching Options */}
         {showOptions && !feedback && !needsSelfRegulation && (
-          <div className="space-y-2 pt-2 border-t border-[#EBE7DF]">
-            <span className="text-[10px] font-bold text-stone-500 uppercase tracking-wider block mb-1">
-              Selecciona tu respuesta (Teclas 1 - {currentNode.options.length}):
-            </span>
-            <div className="grid grid-cols-1 gap-2">
-              {currentNode.options.map((option, idx) => (
-                <button
-                  key={option.id}
-                  onClick={() => handleSelectOption(option)}
-                  className="p-3 rounded-2xl bg-[#F4EFE6] hover:bg-[#EAE3D5] active:bg-[#DDD3C0] border border-[#C2B299] text-left text-xs transition-all flex flex-col space-y-1.5 shadow-xs cursor-pointer group"
-                >
-                  <div className="flex justify-between items-center">
-                    <span className="font-bold text-stone-950 group-hover:text-black">
-                      <span className="font-mono text-[#6F5643] mr-2">[{idx + 1}]</span>
-                      {option.label}
+          <div className="space-y-3 animate-fade-in">
+            <div className="flex items-center justify-center gap-4 md:gap-6">
+              <button
+                onClick={() => {
+                  AudioManager.playKeyClack();
+                  setSelectedIndex((prev) => (prev - 1 + currentNode.options.length) % currentNode.options.length);
+                }}
+                className="rpg-btn px-3 py-2 font-arcade text-xs cursor-pointer"
+                title="Opción anterior (Flecha Izquierda)"
+              >
+                ◀
+              </button>
+
+              <div className="flex items-center gap-4">
+                {currentNode.options.map((opt, idx) => {
+                  const isSelected = idx === selectedIndex;
+                  const letter = OPTION_LETTERS[idx] || String(idx + 1);
+                  return (
+                    <button
+                      key={opt.id}
+                      onClick={() => {
+                        AudioManager.playKeyClack();
+                        setSelectedIndex(idx);
+                      }}
+                      className={`relative w-12 h-12 md:w-14 md:h-14 flex items-center justify-center font-arcade text-sm md:text-base transition-all cursor-pointer border-2 ${
+                        isSelected
+                          ? 'bg-amber-400 text-stone-950 border-white -translate-y-2 shadow-[0_6px_0_0_#000000] scale-110'
+                          : 'bg-[#1e293b] text-slate-400 border-slate-500 hover:text-white shadow-[0_3px_0_0_#000000]'
+                      }`}
+                    >
+                      {letter}
+                      {isSelected && (
+                        <span className="absolute -top-4 font-arcade text-[9px] text-amber-300 animate-bounce">
+                          ▼
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                onClick={() => {
+                  AudioManager.playKeyClack();
+                  setSelectedIndex((prev) => (prev + 1) % currentNode.options.length);
+                }}
+                className="rpg-btn px-3 py-2 font-arcade text-xs cursor-pointer"
+                title="Siguiente opción (Flecha Derecha)"
+              >
+                ▶
+              </button>
+            </div>
+
+            <div className="rpg-box-dark p-5 md:p-6 relative">
+              <div className="flex items-start gap-4">
+                <div className="hidden sm:flex flex-col items-center shrink-0 bg-slate-900 border-2 border-slate-600 p-2">
+                  <canvas
+                    ref={playerPreviewCanvasRef}
+                    className="w-12 h-12 object-contain"
+                    style={{ imageRendering: 'pixelated' }}
+                  />
+                  <span className="font-arcade text-[8px] text-emerald-400 mt-1">TÚ</span>
+                </div>
+
+                <div className="flex-1 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-arcade text-[10px] text-amber-400">
+                      OPCIÓN [{OPTION_LETTERS[selectedIndex]}] — TU RESPUESTA:
                     </span>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full font-bold bg-[#E6DEC8] text-[#4A3B32] border border-[#C2B299]">
-                      {option.styleTag}
+                    <span className="font-arcade text-[8px] text-slate-400">
+                      {selectedIndex + 1} DE {currentNode.options.length}
                     </span>
                   </div>
 
-                  {/* Coach reflection preview */}
-                  {coachMode && (
-                    <div className="text-[10px] text-stone-600 flex items-center space-x-2 pl-6">
-                      <span>⚖️ Impacto previsto:</span>
-                      {option.ieDelta !== 0 && (
-                        <span className={option.ieDelta > 0 ? 'text-[#2F5233] font-bold' : 'text-[#8C2D19] font-bold'}>
-                          {option.ieDelta > 0 ? `+${option.ieDelta}` : option.ieDelta} IE
-                        </span>
-                      )}
-                      {option.timeCostMinutes !== 0 && (
-                        <span className="text-stone-600">
-                          {option.timeCostMinutes > 0 ? `+${option.timeCostMinutes}` : option.timeCostMinutes} min
-                        </span>
-                      )}
-                      {option.fiveCDelta &&
-                        Object.entries(option.fiveCDelta).map(([k, v]) => (
-                          <span key={k} className={v > 0 ? 'text-[#2F5233]' : 'text-[#8C2D19]'}>
-                            {k.slice(0, 4)}: {v > 0 ? `+${v}` : v}
-                          </span>
-                        ))}
-                    </div>
-                  )}
+                  <p className="font-dialogue text-2xl md:text-3xl text-white leading-snug min-h-[64px]">
+                    {activeOption.label}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 pt-3 border-t-2 border-slate-700 flex flex-wrap items-center justify-between gap-2">
+                <span className="font-arcade text-[8px] md:text-[9px] text-slate-400">
+                  🕹️ USA [⬅️ / ➡️] PARA GIRAR EL ROSCO
+                </span>
+
+                <button
+                  onClick={() => handleSelectOption(activeOption)}
+                  className="rpg-btn px-5 py-2 font-arcade text-[10px] bg-emerald-400 hover:bg-emerald-300 text-stone-950 cursor-pointer"
+                >
+                  [ENTER / ESPACIO] RESPONDER ▶
                 </button>
-              ))}
+              </div>
             </div>
           </div>
         )}
 
-        {/* Consequence & Feedback Toast */}
         {feedback && (
-          <div className="p-4 rounded-2xl bg-[#EBE7DF] border border-[#D1C9BC] space-y-3 text-xs shadow-xs animate-fade-in">
-            <div className="font-bold text-stone-950 text-sm">
-              📢 Consecuencia Inmediata:
+          <div className="rpg-box-dark p-6 space-y-4 animate-fade-in">
+            <div className="flex items-center gap-2 border-b-2 border-slate-700 pb-2">
+              <span className="font-arcade text-xs text-amber-400">
+                ⚡ REACCIÓN EN LA OFICINA
+              </span>
             </div>
-            <p className="text-stone-800 leading-relaxed font-medium">
+
+            <p className="font-dialogue text-2xl md:text-3xl text-slate-100 leading-snug">
               {feedback.consequenceText}
             </p>
 
-            {/* Stat Deltas */}
-            {feedback.deltas.length > 0 && (
-              <div className="flex flex-wrap gap-2 pt-1 font-mono text-[11px] font-bold">
-                {feedback.deltas.map((d, i) => (
-                  <span
-                    key={i}
-                    className={`px-2 py-0.5 rounded shadow-xs ${
-                      d.isPositive
-                        ? 'bg-[#E2EBD8] text-[#2F5233] border border-[#B3C99C]'
-                        : 'bg-[#FBE5E1] text-[#8C2D19] border border-[#EBB3A9]'
-                    }`}
-                  >
-                    {d.label}: {d.value > 0 ? `+${d.value}` : d.value}
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {/* Next Action Button */}
             <div className="flex justify-end pt-2">
               <button
                 onClick={handleAdvanceConsequence}
-                className="px-6 py-2 rounded-xl bg-[#6F5643] hover:bg-[#5C4736] text-white font-bold text-xs shadow-md cursor-pointer transition-all flex items-center space-x-1"
+                className="rpg-btn px-6 py-2.5 font-arcade text-[10px] bg-amber-300 hover:bg-amber-200 cursor-pointer"
               >
-                <span>{feedback.nextNodeId ? 'Continuar Historia ▶' : 'Cerrar Diálogo (Espacio) ✕'}</span>
+                {feedback.nextNodeId ? '[ESPACIO] CONTINUAR ▶' : '[ESPACIO] VOLVER A LA OFICINA ▶'}
               </button>
             </div>
           </div>

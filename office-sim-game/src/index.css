@@ -1,19 +1,121 @@
+/* src/index.css */
 @import "tailwindcss";
 
 @layer base {
   :root {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    color: #111827;
-    background-color: #f5f3ef;
+    --font-pixel-title: 'Press Start 2P', monospace;
+    --font-pixel-body: 'VT323', monospace;
+    color: #f8f8f2;
+    background-color: #0b0e17;
   }
 
-  body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  html,
+  body,
+  #root {
+    width: 100vw;
+    height: 100vh;
     margin: 0;
     padding: 0;
     overflow: hidden;
     user-select: none;
-    -webkit-font-smoothing: antialiased;
+    background-color: #0b0e17;
+    font-family: var(--font-pixel-body);
+    image-rendering: pixelated;
+    -webkit-font-smoothing: none;
     -moz-osx-font-smoothing: grayscale;
   }
+}
+
+/* Tipografías de Videojuego */
+.font-arcade {
+  font-family: 'Press Start 2P', monospace;
+  letter-spacing: -0.02em;
+}
+
+.font-dialogue {
+  font-family: 'VT323', monospace;
+  letter-spacing: 0.02em;
+}
+
+/* Sombra de título 3D estilo Arcade 16-Bit */
+.arcade-title-shadow {
+  text-shadow:
+    0 4px 0 #92400e,
+    4px 4px 0 #000000,
+    -2px -2px 0 #000000,
+    2px -2px 0 #000000,
+    -2px 2px 0 #000000;
+}
+
+/* Efecto sutil de líneas CRT retro y rejilla pixel */
+.retro-grid-bg {
+  background-color: #0b0e17;
+  background-image: 
+    linear-gradient(rgba(30, 41, 59, 0.35) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30, 41, 59, 0.35) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.crt-scanlines {
+  background: linear-gradient(
+    rgba(18, 16, 16, 0) 50%, 
+    rgba(0, 0, 0, 0.25) 50%
+  );
+  background-size: 100% 4px;
+}
+
+/* Cajas RPG Clásicas (Estilo GBA / SNES) */
+.rpg-box-dark {
+  background-color: #181825;
+  color: #f8f8f2;
+  border: 3px solid #f8f8f2;
+  box-shadow: 
+    inset 0 0 0 3px #313244,
+    0 4px 0 0 #050508,
+    4px 4px 0 0 #050508;
+}
+
+.rpg-box-cream {
+  background-color: #f4eed7;
+  color: #1e1b18;
+  border: 3px solid #2b2118;
+  box-shadow: 
+    inset 0 0 0 3px #d5c8a8,
+    0 5px 0 0 #14100c,
+    5px 5px 0 0 #14100c;
+}
+
+/* Botón físico estilo tecla mecánica / arcade */
+.rpg-btn {
+  background-color: #e5dcc5;
+  color: #1e1b18;
+  border: 2px solid #2b2118;
+  box-shadow: 
+    inset -2px -2px 0px #b8ab8e,
+    inset 2px 2px 0px #ffffff,
+    0 3px 0 0 #14100c;
+  transition: transform 0.05s ease, box-shadow 0.05s ease;
+}
+
+.rpg-btn:hover {
+  background-color: #f2ead7;
+}
+
+.rpg-btn:active {
+  transform: translateY(2px);
+  box-shadow: 
+    inset 2px 2px 0px #b8ab8e,
+    0 1px 0 0 #14100c;
+}
+
+/* Segmentos para barras de estadísticas retro */
+.stat-bar-segmented {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    transparent 80%,
+    rgba(24, 24, 37, 0.85) 80%,
+    rgba(24, 24, 37, 0.85) 100%
+  );
+  background-size: 10px 100%;
 }
