@@ -1,15 +1,16 @@
 /**
  * src/state/useGameStore.ts
- * Authoritative global game state managed by Zustand.
- * Adheres strictly to:
- * - RPG Pattern 1: Derived stats from base attributes (recomputed, never stored as mutable truth)
- * - Save-Systems Pattern 1: Authoritative serializable state snapshot with versioning
+ * Authoritative global game state managed by Zustand (Zero circular dependencies).
  */
 
 import { create } from 'zustand';
 import type {
   FiveCMetrics,
   FiveCKey,
+  NPCAffinities,
+  NPCKey,
+  StatChangeToast,
+  InterruptionRecord,
   TimeTool,
   CanonicalTimeTool,
   IEClimateTier,
@@ -25,6 +26,7 @@ import type {
   KanbanTask,
 } from '../types/game';
 import { INITIAL_TASKS } from '../data/tasks';
+import { ACT_INTERRUPTIONS } from '../data/storyNodes';
 import {
   clamp,
   calculateICE,
@@ -35,19 +37,25 @@ import {
   evaluateEnding,
 } from '../utils/mathEngine';
 
-// Re-export types for backward compatibility with storyNodes.ts and UI components
-export type { FiveCMetrics, TimeTool, CanonicalTimeTool, ActiveInteractable, ActiveModal, InteractableType };
+export type {
+  FiveCMetrics,
+  TimeTool,
+  CanonicalTimeTool,
+  ActiveInteractable,
+  ActiveModal,
+  InteractableType,
+};
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 export const DEFAULT_SKIN_CONFIG: SkinConfig = {
   skinId: 'default_junior',
   name: 'Junior Fullstack Dev',
   layers: {
-    body: 'base_body',
-    hair: { sprite: 'hair_messy', tint: '#4A2E1B' },
+    body: 'skin_light',
+    hair: { sprite: 'hair_spiky', tint: '#3B2314' },
     top: { sprite: 'shirt_hoodie', tint: '#2563EB' },
-    bottom: { sprite: 'pants_jeans', tint: '#374151' },
+    bottom: { sprite: 'pants_jeans', tint: '#1E293B' },
     accessory: 'none',
   },
 };
@@ -60,27 +68,75 @@ export const INITIAL_FIVE_C: FiveCMetrics = {
   complementariedad: 50,
 };
 
+export const INITIAL_AFFINITIES: NPCAffinities = {
+  elena: 50,
+  david: 50,
+  marcos: 50,
+  sofia: 50,
+  lucas: 50,
+};
+
+const FIVE_C_LABELS: Record<FiveCKey, string> = {
+  compromiso: 'Compromiso',
+  confianza: 'Confianza',
+  coordinacion: 'Coordinación',
+  comunicacion: 'Comunicación',
+  complementariedad: 'Complement.',
+};
+
+const NPC_LABELS: Record<NPCKey, string> = {
+  elena: 'Afinidad Elena',
+  david: 'Afinidad David',
+  marcos: 'Afinidad Marcos',
+  sofia: 'Afinidad Sofía',
+  lucas: 'Afinidad Lucas',
+};
+
+function makeStatToast(
+  statKey: string,
+  label: string,
+  delta: number,
+  newValue: number,
+  category: StatChangeToast['category'],
+  isBeneficial: boolean
+): StatChangeToast {
+  return {
+    id: `${statKey}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    statKey,
+    label,
+    delta: Math.round(delta),
+    newValue: Math.round(newValue),
+    category,
+    isBeneficial,
+    timestamp: Date.now(),
+  };
+}
+
 export interface GameStoreState {
-  // Base authoritative attributes
-  emotionalIntelligence: number; // [0, 100], starts at 50
-  fiveCs: FiveCMetrics;          // Each [0, 100], starts at 50
-  strikes: StrikeLevel;          // 0 | 1 | 2 | 3
-  currentSprint: SprintNumber;   // 1 | 2 | 3
-  dayTimeMinutes: number;        // 540 (09:00) to 1080 (18:00)
+  emotionalIntelligence: number;
+  fiveCs: FiveCMetrics;
+  affinities: NPCAffinities;
+  teamStress: number;
+  timeManagement: number;
+
+  recentStatChanges: StatChangeToast[];
+  interruptionHistory: InterruptionRecord[];
+  triggeredInterruptions: string[];
+  pendingInterruptionNodeId: string | null;
+
+  strikes: StrikeLevel;
+  currentSprint: SprintNumber;
+  dayTimeMinutes: number;
   isPaused: boolean;
   pomodoroActive: boolean;
   pomodoroMinutesRemaining: number;
   temporalMasteryPoints: number;
   unlockedTools: CanonicalTimeTool[];
 
-  // Modifiers layer (RPG Pattern 1)
   activeModifiers: StatModifier[];
-
-  // Phaser <-> React interaction bridge
   activeInteractable: ActiveInteractable | null;
   activeModal: ActiveModal;
 
-  // Environment & narrative flags
   flags: Record<string, boolean | string | number>;
   ending: EndingType | null;
   technicalDebt: number;
@@ -90,9 +146,16 @@ export interface GameStoreState {
   davidSupervising: boolean;
   tasks: KanbanTask[];
 
-  // Actions
   updateIE: (delta: number) => void;
   updateFiveC: (delta: Partial<FiveCMetrics>) => void;
+  updateAffinities: (delta: Partial<NPCAffinities>) => void;
+  updateStress: (delta: number) => void;
+  updateTimeManagement: (delta: number) => void;
+  recordInterruption: (record: InterruptionRecord) => void;
+  triggerNextSprintInterruption: () => string | null;
+  clearPendingInterruption: () => void;
+  dismissStatChange: (id: string) => void;
+
   addStrike: () => void;
   advanceTime: (minutes: number) => void;
   setDayTime: (minutes: number) => void;
@@ -118,28 +181,34 @@ export interface GameStoreState {
   setSkinConfig: (config: SkinConfig) => void;
   setCurrentMapKey: (mapKey: string) => void;
 
-  // Derived selectors (RPG Pattern 1 - recomputed dynamically)
   getEffectiveIE: () => number;
   getEffectiveFiveCs: () => FiveCMetrics;
   getICE: () => number;
+  getAverageAffinity: () => number;
   getTeamVelocity: () => number;
   getIEClimate: () => IEClimateTier;
   getNegotiationProbability: (baseOption: number, hasToolBonus?: boolean) => number;
   evaluateCurrentEnding: () => EndingType;
 
-  // Save/Load snapshots (Save-Systems Pattern 1)
   captureSnapshot: () => GameStateSnapshot;
   loadSnapshot: (snapshot: GameStateSnapshot) => void;
   resetGame: () => void;
 }
 
 export const useGameStore = create<GameStoreState>((set, get) => ({
-  // Initial state
   emotionalIntelligence: 50,
   fiveCs: { ...INITIAL_FIVE_C },
+  affinities: { ...INITIAL_AFFINITIES },
+  teamStress: 50,
+  timeManagement: 50,
+  recentStatChanges: [],
+  interruptionHistory: [],
+  triggeredInterruptions: [],
+  pendingInterruptionNodeId: null,
+
   strikes: 0,
   currentSprint: 1,
-  dayTimeMinutes: 540, // 09:00
+  dayTimeMinutes: 540,
   isPaused: false,
   pomodoroActive: false,
   pomodoroMinutesRemaining: 0,
@@ -157,44 +226,193 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   davidSupervising: false,
   tasks: INITIAL_TASKS.map((t) => ({ ...t })),
 
-  // Actions
   updateIE: (delta) =>
-    set((state) => ({
-      emotionalIntelligence: clamp(state.emotionalIntelligence + delta),
-    })),
+    set((state) => {
+      if (!delta) return state;
+      const next = clamp(state.emotionalIntelligence + delta);
+      const actualDelta = next - state.emotionalIntelligence;
+      if (actualDelta === 0) return state;
+      const toast = makeStatToast(
+        'ie',
+        'Empatía / IE',
+        actualDelta,
+        next,
+        'IE',
+        actualDelta > 0
+      );
+      return {
+        emotionalIntelligence: next,
+        recentStatChanges: [toast, ...state.recentStatChanges].slice(0, 14),
+      };
+    }),
 
   updateFiveC: (delta) =>
+    set((state) => {
+      const nextFiveCs = { ...state.fiveCs };
+      const newToasts: StatChangeToast[] = [];
+
+      (Object.keys(delta) as FiveCKey[]).forEach((key) => {
+        const d = delta[key] ?? 0;
+        if (d !== 0) {
+          const updated = clamp(state.fiveCs[key] + d);
+          const realDelta = updated - state.fiveCs[key];
+          nextFiveCs[key] = updated;
+          if (realDelta !== 0) {
+            newToasts.push(
+              makeStatToast(
+                `5c_${key}`,
+                FIVE_C_LABELS[key],
+                realDelta,
+                updated,
+                '5C',
+                realDelta > 0
+              )
+            );
+          }
+        }
+      });
+
+      if (newToasts.length === 0) return state;
+      return {
+        fiveCs: nextFiveCs,
+        recentStatChanges: [...newToasts, ...state.recentStatChanges].slice(0, 14),
+      };
+    }),
+
+  updateAffinities: (delta) =>
+    set((state) => {
+      const nextAff = { ...state.affinities };
+      const newToasts: StatChangeToast[] = [];
+
+      (Object.keys(delta) as NPCKey[]).forEach((npc) => {
+        const d = delta[npc] ?? 0;
+        if (d !== 0) {
+          const updated = clamp(state.affinities[npc] + d);
+          const realDelta = updated - state.affinities[npc];
+          nextAff[npc] = updated;
+          if (realDelta !== 0) {
+            newToasts.push(
+              makeStatToast(
+                `aff_${npc}`,
+                NPC_LABELS[npc],
+                realDelta,
+                updated,
+                'AFFINITY',
+                realDelta > 0
+              )
+            );
+          }
+        }
+      });
+
+      if (newToasts.length === 0) return state;
+      return {
+        affinities: nextAff,
+        recentStatChanges: [...newToasts, ...state.recentStatChanges].slice(0, 14),
+      };
+    }),
+
+  updateStress: (delta) =>
+    set((state) => {
+      if (!delta) return state;
+      const next = clamp(state.teamStress + delta);
+      const realDelta = next - state.teamStress;
+      if (realDelta === 0) return state;
+      const toast = makeStatToast(
+        'stress',
+        'Estrés Equipo',
+        realDelta,
+        next,
+        'STRESS',
+        realDelta < 0
+      );
+      return {
+        teamStress: next,
+        highStress: next >= 75,
+        recentStatChanges: [toast, ...state.recentStatChanges].slice(0, 14),
+      };
+    }),
+
+  updateTimeManagement: (delta) =>
+    set((state) => {
+      if (!delta) return state;
+      const next = clamp(state.timeManagement + delta);
+      const realDelta = next - state.timeManagement;
+      if (realDelta === 0) return state;
+      const toast = makeStatToast(
+        'time_mgmt',
+        'Gestión Tiempo',
+        realDelta,
+        next,
+        'TIME',
+        realDelta > 0
+      );
+      return {
+        timeManagement: next,
+        recentStatChanges: [toast, ...state.recentStatChanges].slice(0, 14),
+      };
+    }),
+
+  recordInterruption: (record) =>
     set((state) => ({
-      fiveCs: {
-        compromiso: clamp(state.fiveCs.compromiso + (delta.compromiso ?? 0)),
-        confianza: clamp(state.fiveCs.confianza + (delta.confianza ?? 0)),
-        coordinacion: clamp(state.fiveCs.coordinacion + (delta.coordinacion ?? 0)),
-        comunicacion: clamp(state.fiveCs.comunicacion + (delta.comunicacion ?? 0)),
-        complementariedad: clamp(
-          state.fiveCs.complementariedad + (delta.complementariedad ?? 0)
-        ),
-      },
+      interruptionHistory: [...state.interruptionHistory, record],
+      triggeredInterruptions: Array.from(
+        new Set([...state.triggeredInterruptions, record.nodeId])
+      ),
+    })),
+
+  triggerNextSprintInterruption: () => {
+    const state = get();
+    const pool = ACT_INTERRUPTIONS[state.currentSprint] || [];
+    const nextNodeId = pool.find((id) => !state.triggeredInterruptions.includes(id));
+    if (!nextNodeId) return null;
+
+    set((s) => ({
+      triggeredInterruptions: [...s.triggeredInterruptions, nextNodeId],
+      pendingInterruptionNodeId: nextNodeId,
+      activeModal: 'DIALOGUE',
+    }));
+    return nextNodeId;
+  },
+
+  clearPendingInterruption: () =>
+    set(() => ({
+      pendingInterruptionNodeId: null,
+    })),
+
+  dismissStatChange: (id) =>
+    set((state) => ({
+      recentStatChanges: state.recentStatChanges.filter((item) => item.id !== id),
     })),
 
   addStrike: () =>
     set((state) => {
       const nextStrikes = Math.min(state.strikes + 1, 3) as StrikeLevel;
       const updatedFiveCs = { ...state.fiveCs };
+      const newToasts: StatChangeToast[] = [];
       let highStress = state.highStress;
       let davidSupervising = state.davidSupervising;
       let ending = state.ending;
       let activeModal = state.activeModal;
+      const nextStress = clamp(state.teamStress + 15);
+      const nextTimeMgmt = clamp(state.timeManagement - 15);
+
+      newToasts.push(
+        makeStatToast('stress', 'Estrés Equipo', 15, nextStress, 'STRESS', false),
+        makeStatToast('time_mgmt', 'Gestión Tiempo', -15, nextTimeMgmt, 'TIME', false)
+      );
 
       if (nextStrikes === 1) {
-        // Strike 1 (Warning): -15 confianza (C2) and -15 compromiso (C1)
         updatedFiveCs.confianza = clamp(updatedFiveCs.confianza - 15);
         updatedFiveCs.compromiso = clamp(updatedFiveCs.compromiso - 15);
+        newToasts.push(
+          makeStatToast('5c_confianza', 'Confianza', -15, updatedFiveCs.confianza, '5C', false),
+          makeStatToast('5c_compromiso', 'Compromiso', -15, updatedFiveCs.compromiso, '5C', false)
+        );
       } else if (nextStrikes === 2) {
-        // Strike 2 (Improvement Plan / Micromanagement): David's desk proximity supervision
         highStress = true;
         davidSupervising = true;
       } else if (nextStrikes === 3) {
-        // Strike 3 (Firing threshold): Immediately triggers Ending 1
         ending = 'FIRED_GAME_OVER';
         activeModal = 'ENDING';
       }
@@ -202,6 +420,9 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       return {
         strikes: nextStrikes,
         fiveCs: updatedFiveCs,
+        teamStress: nextStress,
+        timeManagement: nextTimeMgmt,
+        recentStatChanges: [...newToasts, ...state.recentStatChanges].slice(0, 14),
         highStress,
         davidSupervising,
         ending,
@@ -212,14 +433,28 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
   advanceTime: (minutes) =>
     set((state) => {
       if (state.isPaused) return state;
-      const newMinutes = Math.min(state.dayTimeMinutes + minutes, 1080); // clamp to 18:00
+      const sprintPressure = state.currentSprint === 1 ? 1 : state.currentSprint === 2 ? 1.15 : 1.25;
+      const scaledMinutes = minutes <= 2 ? Math.max(1, Math.round(minutes * sprintPressure)) : minutes;
+      const newMinutes = Math.min(state.dayTimeMinutes + scaledMinutes, 1080);
+
       let pomodoroRemaining = state.pomodoroMinutesRemaining;
       let pomodoroActive = state.pomodoroActive;
 
       if (pomodoroActive) {
-        pomodoroRemaining = Math.max(pomodoroRemaining - minutes, 0);
+        pomodoroRemaining = Math.max(pomodoroRemaining - scaledMinutes, 0);
         if (pomodoroRemaining === 0) {
           pomodoroActive = false;
+        }
+      }
+
+      let nextTimeManagement = state.timeManagement;
+      const newToasts: StatChangeToast[] = [];
+      if (scaledMinutes >= 35 && !pomodoroActive) {
+        nextTimeManagement = clamp(state.timeManagement - 4);
+        if (nextTimeManagement !== state.timeManagement) {
+          newToasts.push(
+            makeStatToast('time_mgmt', 'Gestión Tiempo', -4, nextTimeManagement, 'TIME', false)
+          );
         }
       }
 
@@ -227,6 +462,11 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
         dayTimeMinutes: newMinutes,
         pomodoroMinutesRemaining: pomodoroRemaining,
         pomodoroActive,
+        timeManagement: nextTimeManagement,
+        recentStatChanges:
+          newToasts.length > 0
+            ? [...newToasts, ...state.recentStatChanges].slice(0, 14)
+            : state.recentStatChanges,
       };
     }),
 
@@ -296,43 +536,62 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     const velocity = state.getTeamVelocity();
     const pomodoroActive = state.pomodoroActive;
     const fiveCs = state.fiveCs;
+    const baseStep = state.currentSprint === 1 ? 28 : state.currentSprint === 2 ? 22 : 20;
 
     set((s) => ({
       tasks: s.tasks.map((t) => {
         if (t.id !== taskId) return t;
-
-        // If in TODO, move to IN_PROGRESS
         if (t.status === 'TODO') {
           return { ...t, status: 'IN_PROGRESS', progressPercent: 25 };
         }
-
-        // If in IN_PROGRESS, advance progress
         if (t.status === 'IN_PROGRESS') {
-          const step = Math.round(25 * velocity * (pomodoroActive ? 1.3 : 1.0));
+          const step = Math.round(baseStep * velocity * (pomodoroActive ? 1.3 : 1.0));
           const nextProgress = Math.min(t.progressPercent + step, 100);
-          state.advanceTime(20);
-
+          state.advanceTime(18);
           if (nextProgress >= 100) {
             return { ...t, status: 'CODE_REVIEW', progressPercent: 100 };
           }
           return { ...t, progressPercent: nextProgress };
         }
-
-        // If in CODE_REVIEW, check approval
         if (t.status === 'CODE_REVIEW') {
+          state.updateTimeManagement(4);
           if (fiveCs.complementariedad >= 40) {
             state.advanceTime(15);
             return { ...t, status: 'DONE' };
           } else {
             state.addTechnicalDebt(15);
-            state.advanceTime(30);
+            state.advanceTime(25);
             return { ...t, status: 'DONE' };
           }
         }
-
         return t;
       }),
     }));
+
+    const updatedState = get();
+    const inProgressCount = updatedState.tasks.filter(
+      (t) => t.act === updatedState.currentSprint && t.status === 'IN_PROGRESS'
+    ).length;
+
+    if (
+      updatedState.currentSprint === 1 &&
+      inProgressCount >= 3 &&
+      !updatedState.triggeredInterruptions.includes('act1_int5_elena')
+    ) {
+      set((s) => ({
+        triggeredInterruptions: [...s.triggeredInterruptions, 'act1_int5_elena'],
+        pendingInterruptionNodeId: 'act1_int5_elena',
+        activeModal: 'DIALOGUE',
+      }));
+      return;
+    }
+
+    const remaining = (ACT_INTERRUPTIONS[updatedState.currentSprint] || []).filter(
+      (id) => !updatedState.triggeredInterruptions.includes(id)
+    );
+    if (remaining.length > 0 && Math.random() < 0.65) {
+      updatedState.triggerNextSprintInterruption();
+    }
   },
 
   updateTask: (taskId, partial) =>
@@ -406,7 +665,6 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
       currentMapKey,
     })),
 
-  // Derived selectors (Pattern 1: Recomputed on the fly)
   getEffectiveIE: () => {
     const state = get();
     let ie = state.emotionalIntelligence;
@@ -443,12 +701,17 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     return calculateICE(effectiveFiveCs);
   },
 
+  getAverageAffinity: () => {
+    const a = get().affinities;
+    return Math.round((a.elena + a.david + a.marcos + a.sofia + a.lucas) / 5);
+  },
+
   getTeamVelocity: () => {
     const ice = get().getICE();
     let velocity = calculateTeamVelocity(ice);
     const state = get();
     if (state.pomodoroActive) {
-      velocity *= 1.3; // +30% coding speed during pomodoro
+      velocity *= 1.3;
     }
     return Number(velocity.toFixed(3));
   },
@@ -462,12 +725,7 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     const state = get();
     const ie = state.getEffectiveIE();
     const fiveCs = state.getEffectiveFiveCs();
-    return calculateNegotiationProbability(
-      baseOption,
-      ie,
-      fiveCs.comunicacion,
-      hasToolBonus
-    );
+    return calculateNegotiationProbability(baseOption, ie, fiveCs.comunicacion, hasToolBonus);
   },
 
   evaluateCurrentEnding: () => {
@@ -481,12 +739,16 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     });
   },
 
-  // Save/Load snapshots
   captureSnapshot: (): GameStateSnapshot => {
     const state = get();
     return {
       emotionalIntelligence: state.emotionalIntelligence,
       fiveCs: { ...state.fiveCs },
+      affinities: { ...state.affinities },
+      teamStress: state.teamStress,
+      timeManagement: state.timeManagement,
+      interruptionHistory: [...state.interruptionHistory],
+      triggeredInterruptions: [...state.triggeredInterruptions],
       strikes: state.strikes,
       currentSprint: state.currentSprint,
       dayTimeMinutes: state.dayTimeMinutes,
@@ -506,6 +768,13 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     set(() => ({
       emotionalIntelligence: snapshot.emotionalIntelligence,
       fiveCs: { ...snapshot.fiveCs },
+      affinities: snapshot.affinities ? { ...snapshot.affinities } : { ...INITIAL_AFFINITIES },
+      teamStress: snapshot.teamStress ?? 50,
+      timeManagement: snapshot.timeManagement ?? 50,
+      interruptionHistory: snapshot.interruptionHistory ?? [],
+      triggeredInterruptions: snapshot.triggeredInterruptions ?? [],
+      pendingInterruptionNodeId: null,
+      recentStatChanges: [],
       strikes: snapshot.strikes,
       currentSprint: snapshot.currentSprint,
       dayTimeMinutes: snapshot.dayTimeMinutes,
@@ -527,6 +796,13 @@ export const useGameStore = create<GameStoreState>((set, get) => ({
     set(() => ({
       emotionalIntelligence: 50,
       fiveCs: { ...INITIAL_FIVE_C },
+      affinities: { ...INITIAL_AFFINITIES },
+      teamStress: 50,
+      timeManagement: 50,
+      recentStatChanges: [],
+      interruptionHistory: [],
+      triggeredInterruptions: [],
+      pendingInterruptionNodeId: null,
       strikes: 0,
       currentSprint: 1,
       dayTimeMinutes: 540,

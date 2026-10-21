@@ -1,12 +1,14 @@
 /**
  * src/core/NPCController.ts
- * Controlador de IA para los 5 compañeros de oficina con Skins Pokémon 2D generadas por SkinBuilder.
+ * Controlador de IA para los 5 compañeros de oficina con Skins Pokémon 2D generadas por SkinBuilder
+ * y progresión dinámica de diálogos según el Sprint y las decisiones tomadas.
  */
 
 import Phaser from 'phaser';
 import { useGameStore } from '../state/useGameStore';
 import { NPCS } from '../data/npcs';
 import { SkinBuilder } from './SkinBuilder';
+import { DialogueRunner } from './DialogueRunner';
 import type { IEClimateTier } from '../types/game';
 
 export type NPCState =
@@ -54,13 +56,10 @@ export class NPCController {
     this.scene = scene;
   }
 
-  public preload(): void {
-    // Las skins de los 5 NPCs se generan proceduralmente en alta calidad con SkinBuilder
-  }
+  public preload(): void {}
 
   public create(wallsGroup?: Phaser.Physics.Arcade.StaticGroup): void {
     this.wallsColliderGroup = wallsGroup;
-    // Registrar las texturas y animaciones de los 5 NPCs (elena_scrum, david_po, etc.)
     SkinBuilder.registerAllNPCsInPhaser(this.scene);
     this.spawnAgents();
   }
@@ -84,7 +83,7 @@ export class NPCController {
         badgeColor: '#EC4899',
         startPos: { x: 480, y: 135 },
         deskPos: { x: 480, y: 135 },
-        dialogueNodeId: 'scene_1_1_daily',
+        dialogueNodeId: 'act1_daily',
         waypoints: [
           { x: 480, y: 135, waitTimeMs: 7000, state: 'BOARD_CHECK', facing: 'up', actionName: 'Revisando Pizarra Scrum' },
           { x: 384, y: 260, waitTimeMs: 5000, state: 'PATROL_WALK', facing: 'down', actionName: 'Apoyando a Lucas' },
@@ -98,7 +97,7 @@ export class NPCController {
         badgeColor: '#10B981',
         startPos: { x: 384, y: 245 },
         deskPos: { x: 384, y: 245 },
-        dialogueNodeId: 'scene_1_1_daily',
+        dialogueNodeId: 'act1_int1_lucas',
         waypoints: [
           { x: 384, y: 245, waitTimeMs: 10000, state: 'IDLE_WORK', facing: 'up', actionName: 'Depurando tokens JWT' },
           { x: 140, y: 460, waitTimeMs: 6000, state: 'COFFEE_BREAK', facing: 'up', actionName: 'Tomando café nervioso' },
@@ -111,7 +110,7 @@ export class NPCController {
         badgeColor: '#EF4444',
         startPos: { x: 672, y: 245 },
         deskPos: { x: 672, y: 245 },
-        dialogueNodeId: 'scene_1_2_marcos_pr',
+        dialogueNodeId: 'act1_int2_marcos',
         waypoints: [
           { x: 672, y: 245, waitTimeMs: 13000, state: 'IDLE_WORK', facing: 'up', actionName: 'Optimizando SQL' },
           { x: 160, y: 130, waitTimeMs: 7000, state: 'BOARD_CHECK', facing: 'up', actionName: 'Revisando Racks de Servidores' },
@@ -124,7 +123,7 @@ export class NPCController {
         badgeColor: '#8B5CF6',
         startPos: { x: 528, y: 375 },
         deskPos: { x: 528, y: 375 },
-        dialogueNodeId: 'scene_2_2_meeting_war',
+        dialogueNodeId: 'act1_int3_sofia',
         waypoints: [
           { x: 528, y: 375, waitTimeMs: 10000, state: 'IDLE_WORK', facing: 'up', actionName: 'Diseñando en Figma' },
           { x: 480, y: 135, waitTimeMs: 5000, state: 'BOARD_CHECK', facing: 'up', actionName: 'Viendo historias de usuario' },
@@ -137,7 +136,7 @@ export class NPCController {
         badgeColor: '#F59E0B',
         startPos: { x: 800, y: 150 },
         deskPos: { x: 800, y: 150 },
-        dialogueNodeId: 'scene_2_1_david_scope',
+        dialogueNodeId: 'act1_int4_david',
         waypoints: [
           { x: 800, y: 150, waitTimeMs: 11000, state: 'IDLE_WORK', facing: 'down', actionName: 'Al teléfono con el Banco' },
           { x: 560, y: 490, waitTimeMs: 6000, state: 'PATROL_WALK', facing: 'down', actionName: 'Preparando Demo' },
@@ -162,7 +161,6 @@ export class NPCController {
         this.scene.physics.add.collider(sprite, this.wallsColliderGroup);
       }
 
-      // Etiqueta de nombre con estética RPG clásica
       const nameTag = this.scene.add.text(
         config.startPos.x,
         config.startPos.y - 22,
@@ -179,7 +177,6 @@ export class NPCController {
       nameTag.setOrigin(0.5);
       nameTag.setDepth(config.startPos.y + 10);
 
-      // Contenedor de bocadillo de diálogo flotante
       const bubbleContainer = this.scene.add.container(config.startPos.x, config.startPos.y - 44);
       bubbleContainer.setDepth(9998);
       bubbleContainer.setVisible(false);
@@ -248,7 +245,6 @@ export class NPCController {
         agent.sprite.y
       );
 
-      // Consecuencia Strike 2: David supervisando tu mesa
       if (agent.id === 'david_po' && davidSupervising) {
         agent.state = 'DAVID_MICROMANAGING';
         const targetX = 250;
@@ -302,7 +298,6 @@ export class NPCController {
           wp.x,
           wp.y
         );
-
         if (distToWp > 10) {
           this.moveTowards(agent, wp.x, wp.y, 48);
         } else {
@@ -329,7 +324,6 @@ export class NPCController {
     const angle = Math.atan2(dy, dx);
     const vx = Math.cos(angle) * speed;
     const vy = Math.sin(angle) * speed;
-
     agent.sprite.setVelocity(vx, vy);
 
     if (Math.abs(dx) > Math.abs(dy)) {
@@ -361,7 +355,6 @@ export class NPCController {
     const bounds = agent.bubbleText.getBounds();
 
     agent.bubbleBg.clear();
-    // Caja de diálogo estilo Pokémon GBA (borde doble azulado/oscuro y fondo crema limpio)
     agent.bubbleBg.fillStyle(0xFFFFFF, 0.98);
     agent.bubbleBg.lineStyle(2, 0x1E293B, 1.0);
     agent.bubbleBg.fillRoundedRect(
@@ -378,7 +371,6 @@ export class NPCController {
       bounds.height + 12,
       6
     );
-
     agent.bubbleBg.fillTriangle(
       -4, bounds.height / 2 + 6,
       4, bounds.height / 2 + 6,
@@ -401,7 +393,6 @@ export class NPCController {
     );
     const pool = nearby.length > 0 ? nearby : agentsArray;
     const chosen = pool[Math.floor(Math.random() * pool.length)];
-
     const profile = NPCS[chosen.id];
     if (!profile) return;
 
@@ -434,10 +425,13 @@ export class NPCController {
 
     if (!closest) return null;
     const a = closest as NPCAgent;
+    const currentSprint = useGameStore.getState().currentSprint;
+    const resolvedNodeId = DialogueRunner.resolveDynamicNodeForNPC(a.id, currentSprint);
+
     return {
       id: a.id,
       name: a.name,
-      dialogueNodeId: a.dialogueNodeId,
+      dialogueNodeId: resolvedNodeId,
       x: a.sprite.x,
       y: a.sprite.y,
     };

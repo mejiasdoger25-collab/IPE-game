@@ -1,8 +1,7 @@
 /**
  * src/core/OfficeScene.ts
- * Escena 2D Top-Down estilo Pokémon GBA / Silph Co. Lab.
- * Incluye generador de tileset pixel-art detallado, estaciones de trabajo iluminadas,
- * alfombras por departamento, plantas decorativas, racks de servidores y colisiones precisas.
+ * Escena 2D Top-Down con bloqueo de re-disparo (cooldown de 450ms) al cerrar un diálogo,
+ * evitando que pulsar ESPACIO para cerrar vuelva a abrir la conversación.
  */
 
 import Phaser from 'phaser';
@@ -36,17 +35,16 @@ export class OfficeScene extends Phaser.Scene {
   };
   private interactKey!: Phaser.Input.Keyboard.Key;
   private wallsGroup!: Phaser.Physics.Arcade.StaticGroup;
-
   private interactables: SceneInteractable[] = [];
   private currentNearInteractable: SceneInteractable | null = null;
   private promptText!: Phaser.GameObjects.Text;
   private promptBg!: Phaser.GameObjects.Graphics;
   private promptContainer!: Phaser.GameObjects.Container;
   private currentMapKey = 'startup';
-
   private npcController!: NPCController;
   private lastFacingDirection: 'up' | 'down' | 'left' | 'right' = 'down';
   private unsubscribeStore?: () => void;
+  private modalCooldownMs = 0;
 
   constructor() {
     super({ key: 'OfficeScene' });
@@ -57,6 +55,7 @@ export class OfficeScene extends Phaser.Scene {
     this.currentNearInteractable = null;
     this.currentMapKey = useGameStore.getState().currentMapKey || 'startup';
     this.npcController = new NPCController(this);
+    this.modalCooldownMs = 0;
   }
 
   public preload(): void {
@@ -69,29 +68,20 @@ export class OfficeScene extends Phaser.Scene {
     const mapHeight = 640;
     this.physics.world.setBounds(0, 0, mapWidth, mapHeight);
 
-    // 1. Construir el mapa estilo Laboratorio Pokémon 2D
     this.buildPokemonStyleOffice();
-
-    // 2. Registrar Skin del Jugador
     SkinBuilder.registerInPhaser(this, useGameStore.getState().skinConfig, 'player_custom_skin');
-
-    // 3. Crear Jugador
     this.createPlayer();
 
-    // 4. Crear los 5 NPCs con sus skins propias
     this.npcController.create(this.wallsGroup);
-
     const npcs = this.npcController.getNPCSprites();
     npcs.forEach((npcSprite) => {
       this.physics.add.collider(this.player, npcSprite);
     });
 
-    // 5. Controles, Cámara y UI flotante
     this.setupInput();
     this.setupCamera();
     this.setupFloatingPrompt();
 
-    // 6. Suscripción reactiva para cambios de Skin o Mapa en vivo
     this.unsubscribeStore = useGameStore.subscribe((state, prevState) => {
       if (state.currentMapKey !== prevState.currentMapKey) {
         this.currentMapKey = state.currentMapKey;
@@ -116,11 +106,16 @@ export class OfficeScene extends Phaser.Scene {
     const isModalOpen = gameStore.activeModal !== 'NONE';
 
     if (isModalOpen) {
+      this.modalCooldownMs = 450; // Bloquea la tecla Espacio durante 450ms tras cerrar un diálogo
       this.player.setVelocity(0, 0);
       this.promptContainer.setVisible(false);
       this.playPlayerIdle();
       this.npcController.update(delta, this.player.x, this.player.y, true);
       return;
+    }
+
+    if (this.modalCooldownMs > 0) {
+      this.modalCooldownMs = Math.max(0, this.modalCooldownMs - delta);
     }
 
     let vx = 0;
@@ -160,7 +155,11 @@ export class OfficeScene extends Phaser.Scene {
     this.npcController.update(delta, this.player.x, this.player.y, isModalOpen);
     this.updateProximityDetection();
 
-    if (Phaser.Input.Keyboard.JustDown(this.interactKey) || Phaser.Input.Keyboard.JustDown(this.cursors.space)) {
+    if (
+      this.modalCooldownMs <= 0 &&
+      (Phaser.Input.Keyboard.JustDown(this.interactKey) ||
+        Phaser.Input.Keyboard.JustDown(this.cursors.space))
+    ) {
       this.handleInteractAction();
     }
   }
@@ -184,13 +183,6 @@ export class OfficeScene extends Phaser.Scene {
     }
   }
 
-  /**
-   * Genera un tileset 2D estilo Pokémon GBA (16 tiles de 32x32)
-   * 0: Suelo madera cálida, 1: Baldosa laboratorio, 2: Alfombra azul, 3: Alfombra roja
-   * 4: Pared superior con zócalo, 5: Muro perimetral oscuro, 6: Cristal divisorio
-   * 7: Escritorio Dev con doble monitor, 8: Silla gaming/oficina, 9: Planta maceta Pokémon
-   * 10: Rack de Servidores LED, 11: Pizarra Scrum Kanban, 12: Cafetera Espresso, 13: Mesa Reuniones, 14: Ping-Pong
-   */
   private generatePokemonStyleTileset(): void {
     const key = 'pokemon_office_tiles';
     if (this.textures.exists(key)) this.textures.remove(key);
@@ -203,7 +195,6 @@ export class OfficeScene extends Phaser.Scene {
     const ctx = canvas.getContext('2d')!;
     ctx.imageSmoothingEnabled = false;
 
-    // Tile 0: Suelo Parqué Madera Cálida (Estilo Pueblo Paleta / Laboratorio)
     ctx.fillStyle = '#E6CCA9';
     ctx.fillRect(0, 0, 32, 32);
     ctx.fillStyle = '#D4B48C';
@@ -215,7 +206,6 @@ export class OfficeScene extends Phaser.Scene {
     ctx.fillRect(2, 2, 10, 1);
     ctx.fillRect(18, 18, 10, 1);
 
-    // Tile 1: Baldosa Limpia Silph Co. (Modo Corporativo)
     const ox1 = 32;
     ctx.fillStyle = '#DCE4EC';
     ctx.fillRect(ox1, 0, 32, 32);
@@ -225,7 +215,6 @@ export class OfficeScene extends Phaser.Scene {
     ctx.fillStyle = '#F1F5F9';
     ctx.fillRect(ox1 + 2, 2, 26, 2);
 
-    // Tile 2: Alfombra Azul Zona Reuniones
     const ox2 = 64;
     ctx.fillStyle = '#3B82F6';
     ctx.fillRect(ox2, 0, 32, 32);
@@ -234,7 +223,6 @@ export class OfficeScene extends Phaser.Scene {
     ctx.fillStyle = '#93C5FD';
     ctx.strokeRect(ox2 + 3, 3, 26, 26);
 
-    // Tile 3: Alfombra Terracota / Sala de Café
     const ox3 = 96;
     ctx.fillStyle = '#D97706';
     ctx.fillRect(ox3, 0, 32, 32);
@@ -243,18 +231,16 @@ export class OfficeScene extends Phaser.Scene {
     ctx.fillStyle = '#FDE68A';
     ctx.strokeRect(ox3 + 3, 3, 26, 26);
 
-    // Tile 4: Pared Interior con Zócalo Pokémon
     const ox4 = 128;
     ctx.fillStyle = '#64748B';
     ctx.fillRect(ox4, 0, 32, 32);
     ctx.fillStyle = '#94A3B8';
     ctx.fillRect(ox4, 4, 32, 20);
-    ctx.fillStyle = '#334155'; // Zócalo inferior
+    ctx.fillStyle = '#334155';
     ctx.fillRect(ox4, 24, 32, 8);
     ctx.fillStyle = '#1E293B';
     ctx.fillRect(ox4, 30, 32, 2);
 
-    // Tile 5: Muro Perimetral Sólido
     const ox5 = 160;
     ctx.fillStyle = '#1E293B';
     ctx.fillRect(ox5, 0, 32, 32);
@@ -263,7 +249,6 @@ export class OfficeScene extends Phaser.Scene {
     ctx.fillStyle = '#475569';
     ctx.fillRect(ox5 + 4, 4, 24, 4);
 
-    // Tile 6: Panel de Cristal Despacho PO
     const ox6 = 192;
     ctx.fillStyle = '#94A3B8';
     ctx.fillRect(ox6, 12, 32, 8);
@@ -272,46 +257,39 @@ export class OfficeScene extends Phaser.Scene {
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(ox6 + 6, 14, 6, 2);
 
-    // Tile 7: Estación de Trabajo Dev (Mesa Roble + Doble Monitor con Código)
     const ox7 = 224;
     ctx.fillStyle = '#14141F';
     ctx.fillRect(ox7 + 1, 4, 30, 24);
-    ctx.fillStyle = '#A16207'; // Madera escritorio
+    ctx.fillStyle = '#A16207';
     ctx.fillRect(ox7 + 2, 5, 28, 20);
     ctx.fillStyle = '#CA8A04';
     ctx.fillRect(ox7 + 3, 6, 26, 14);
-    // Monitor Izquierdo y Derecho
     ctx.fillStyle = '#0F172A';
     ctx.fillRect(ox7 + 4, 3, 11, 10);
     ctx.fillRect(ox7 + 17, 3, 11, 10);
-    ctx.fillStyle = '#0284C7'; // Pantalla encendida
+    ctx.fillStyle = '#0284C7';
     ctx.fillRect(ox7 + 5, 4, 9, 7);
     ctx.fillRect(ox7 + 18, 4, 9, 7);
-    // Líneas de código verdes/amarillas
     ctx.fillStyle = '#4ADE80';
     ctx.fillRect(ox7 + 6, 5, 5, 1);
     ctx.fillRect(ox7 + 6, 7, 7, 1);
     ctx.fillStyle = '#FACC15';
     ctx.fillRect(ox7 + 19, 5, 6, 1);
     ctx.fillRect(ox7 + 19, 8, 4, 1);
-    // Teclado mecánico
     ctx.fillStyle = '#E2E8F0';
     ctx.fillRect(ox7 + 11, 15, 10, 4);
 
-    // Tile 8: Silla Ergonómica
     const ox8 = 256;
     ctx.fillStyle = '#1E293B';
     ctx.fillRect(ox8 + 9, 8, 14, 16);
     ctx.fillStyle = '#3B82F6';
     ctx.fillRect(ox8 + 10, 9, 12, 12);
 
-    // Tile 9: Planta en Maceta Clásica Pokémon (Árbol interior)
     const ox9 = 288;
     ctx.fillStyle = '#14141F';
     ctx.fillRect(ox9 + 8, 18, 16, 12);
-    ctx.fillStyle = '#B45309'; // Maceta terracota
+    ctx.fillStyle = '#B45309';
     ctx.fillRect(ox9 + 9, 19, 14, 10);
-    // Hojas frondosas verdes con contorno
     ctx.fillStyle = '#064E3B';
     ctx.fillRect(ox9 + 5, 3, 22, 17);
     ctx.fillStyle = '#10B981';
@@ -319,7 +297,6 @@ export class OfficeScene extends Phaser.Scene {
     ctx.fillStyle = '#34D399';
     ctx.fillRect(ox9 + 9, 5, 10, 6);
 
-    // Tile 10: Rack de Servidores (Con LEDs verdes y rojos)
     const ox10 = 320;
     ctx.fillStyle = '#0F172A';
     ctx.fillRect(ox10 + 3, 1, 26, 30);
@@ -335,13 +312,11 @@ export class OfficeScene extends Phaser.Scene {
       ctx.fillRect(ox10 + 22, ry + 1, 2, 2);
     }
 
-    // Tile 11: Pizarra Scrum Kanban con Post-its
     const ox11 = 352;
     ctx.fillStyle = '#78350F';
     ctx.fillRect(ox11 + 1, 3, 30, 24);
     ctx.fillStyle = '#F8FAFC';
     ctx.fillRect(ox11 + 3, 5, 26, 20);
-    // Columnas y notas adhesivas
     ctx.fillStyle = '#CBD5E1';
     ctx.fillRect(ox11 + 11, 5, 1, 20);
     ctx.fillRect(ox11 + 20, 5, 1, 20);
@@ -354,18 +329,16 @@ export class OfficeScene extends Phaser.Scene {
     ctx.fillRect(ox11 + 22, 7, 5, 4);
     ctx.fillRect(ox11 + 22, 14, 5, 4);
 
-    // Tile 12: Estación de Café Espresso
     const ox12 = 384;
     ctx.fillStyle = '#475569';
     ctx.fillRect(ox12 + 3, 4, 26, 24);
     ctx.fillStyle = '#E2E8F0';
     ctx.fillRect(ox12 + 5, 6, 22, 18);
-    ctx.fillStyle = '#DC2626'; // Cafetera roja
+    ctx.fillStyle = '#DC2626';
     ctx.fillRect(ox12 + 8, 7, 10, 12);
-    ctx.fillStyle = '#FFFFFF'; // Tazas
+    ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(ox12 + 20, 12, 4, 5);
 
-    // Tile 13: Mesa de Juntas (Sala de Reuniones)
     const ox13 = 416;
     ctx.fillStyle = '#451A03';
     ctx.fillRect(ox13 + 1, 3, 30, 26);
@@ -374,14 +347,13 @@ export class OfficeScene extends Phaser.Scene {
     ctx.fillStyle = '#B45309';
     ctx.fillRect(ox13 + 5, 7, 22, 18);
 
-    // Tile 14: Mesa de Ping-Pong Recreativa
     const ox14 = 448;
     ctx.fillStyle = '#FFFFFF';
     ctx.fillRect(ox14 + 1, 3, 30, 26);
     ctx.fillStyle = '#15803D';
     ctx.fillRect(ox14 + 3, 5, 26, 22);
     ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(ox14 + 15, 5, 2, 22); // Red central
+    ctx.fillRect(ox14 + 15, 5, 2, 22);
     ctx.fillRect(ox14 + 3, 15, 26, 2);
 
     this.textures.addSpriteSheet(key, canvas as unknown as HTMLImageElement, {
@@ -391,37 +363,23 @@ export class OfficeScene extends Phaser.Scene {
     this.textures.get(key).setFilter(0);
   }
 
-  /**
-   * Construye el mapa completo de la oficina al estilo Pokémon 2D
-   */
   private buildPokemonStyleOffice(): void {
     this.wallsGroup = this.physics.add.staticGroup();
     const sheetKey = 'pokemon_office_tiles';
     const tileSize = 32;
-    const cols = 30; // 960px
-    const rows = 20; // 640px
+    const cols = 30;
+    const rows = 20;
     const isCorp = this.currentMapKey === 'corporate';
 
-    // 1. CAPA DE SUELO Y ALFOMBRAS DE DEPARTAMENTO
     for (let y = 0; y < rows; y++) {
       for (let x = 0; x < cols; x++) {
         const posX = x * tileSize + 16;
         const posY = y * tileSize + 16;
-
         let floorFrame = isCorp ? 1 : 0;
 
-        // Alfombra Azul en Sala de Reuniones (Abajo Centro)
-        if (x >= 14 && x <= 21 && y >= 13 && y <= 17) {
-          floorFrame = 2;
-        }
-        // Alfombra Cálida en Zona de Café y Ping-Pong (Abajo Izquierda)
-        if (x >= 2 && x <= 8 && y >= 12 && y <= 17) {
-          floorFrame = 3;
-        }
-        // Alfombra en Despacho de David (Arriba Derecha)
-        if (x >= 22 && x <= 27 && y >= 2 && y <= 6) {
-          floorFrame = 2;
-        }
+        if (x >= 14 && x <= 21 && y >= 13 && y <= 17) floorFrame = 2;
+        if (x >= 2 && x <= 8 && y >= 12 && y <= 17) floorFrame = 3;
+        if (x >= 22 && x <= 27 && y >= 2 && y <= 6) floorFrame = 2;
 
         const tile = this.add.image(posX, posY, sheetKey, floorFrame);
         tile.setDepth(-20);
@@ -446,10 +404,9 @@ export class OfficeScene extends Phaser.Scene {
       return sprite;
     };
 
-    // 2. MUROS PERIMETRALES Y PARED SUPERIOR
     for (let x = 0; x < cols; x++) {
       placeObstacle(x, 0, 5);
-      placeObstacle(x, 1, 4); // Pared con zócalo estilo Pokémon
+      placeObstacle(x, 1, 4);
       placeObstacle(x, rows - 1, 5);
     }
     for (let y = 1; y < rows - 1; y++) {
@@ -457,57 +414,47 @@ export class OfficeScene extends Phaser.Scene {
       placeObstacle(cols - 1, y, 5);
     }
 
-    // 3. PLANTAS DECORATIVAS ESTILO LABORATORIO POKÉMON
     [2, 10, 19, 27].forEach((gx) => placeObstacle(gx, 2, 9));
     placeObstacle(2, 18, 9);
     placeObstacle(27, 18, 9);
     placeObstacle(13, 18, 9);
     placeObstacle(22, 18, 9);
 
-    // 4. RACKS DE SERVIDORES (Arriba Izquierda - Zona Backend/DevOps)
     placeObstacle(3, 2, 10);
     placeObstacle(4, 2, 10);
     placeObstacle(5, 2, 10);
-    this.addZoneLabel(144, 52, '⚡ SERVER RACK', '#38BDF8');
+    this.addZoneLabel(144, 52, '🖥️ SERVER RACK', '#38BDF8');
 
-    // 5. PIZARRA SCRUM KANBAN (Arriba Centro - Zona Elena)
     placeObstacle(14, 2, 11);
     placeObstacle(15, 2, 11);
     this.addZoneLabel(480, 52, '📋 PIZARRA SCRUM', '#F472B6');
 
-    // 6. DESPACHO DE CRISTAL DE DAVID (Arriba Derecha)
     for (let gx = 21; gx <= 28; gx++) {
       if (gx !== 24 && gx !== 25) {
-        placeObstacle(gx, 7, 6); // Cristaleras con puerta abierta
+        placeObstacle(gx, 7, 6);
       }
     }
-    placeObstacle(25, 3, 7); // Mesa de David
+    placeObstacle(25, 3, 7);
     placeDecor(25, 4, 8);
     this.addZoneLabel(800, 52, '💼 DESPACHO PO (DAVID)', '#FBBF24');
 
-    // 7. ISLAS DE TRABAJO DE DESARROLLO (Tu Mesa, Lucas, Marcos y Sofía)
-    // Tu Estación de Trabajo (Izquierda Centro)
     placeObstacle(6, 6, 7);
     placeObstacle(7, 6, 7);
     placeDecor(6, 7, 8);
     this.addZoneLabel(224, 172, '💻 TU MESA (KANBAN)', '#4ADE80');
 
-    // Mesa de Lucas (Centro Izquierda)
     placeObstacle(11, 6, 7);
     placeObstacle(12, 6, 7);
     placeDecor(12, 7, 8);
 
-    // Mesa de Marcos (Centro Derecha)
     placeObstacle(20, 6, 7);
     placeObstacle(21, 6, 7);
     placeDecor(21, 7, 8);
 
-    // Estudio UX/UI de Sofía (Centro)
     placeObstacle(16, 10, 7);
     placeObstacle(17, 10, 7);
     placeDecor(16, 11, 8);
 
-    // 8. SALA DE DESCANSO: CAFETERA Y MESA DE PING-PONG (Abajo Izquierda)
     placeObstacle(3, 13, 12);
     placeObstacle(4, 13, 12);
     this.addZoneLabel(128, 395, '☕ CAFETERÍA', '#F59E0B');
@@ -516,7 +463,6 @@ export class OfficeScene extends Phaser.Scene {
     placeObstacle(6, 16, 14);
     this.addZoneLabel(192, 490, '🏓 PING-PONG', '#34D399');
 
-    // 9. SALA DE REUNIONES (Abajo Centro)
     placeObstacle(16, 15, 13);
     placeObstacle(17, 15, 13);
     placeObstacle(18, 15, 13);
@@ -525,7 +471,6 @@ export class OfficeScene extends Phaser.Scene {
     placeDecor(17, 16, 8);
     this.addZoneLabel(560, 435, '🤝 SALA DE JUNTAS', '#93C5FD');
 
-    // 10. REGISTRAR PUNTOS INTERACTIVOS
     this.interactables = [
       {
         x: 224,
@@ -721,7 +666,6 @@ export class OfficeScene extends Phaser.Scene {
 
   private handleInteractAction(): void {
     if (!this.currentNearInteractable) return;
-
     const game = useGameStore.getState();
     const quests = useQuestStore.getState();
     const item = this.currentNearInteractable;

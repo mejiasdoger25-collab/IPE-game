@@ -1,32 +1,59 @@
 /**
  * src/types/game.ts
  * Strict TypeScript interfaces and type definitions for Sprint Cero / DevLife RPG.
- * Zero untyped variables across Phaser, React, and Zustand stores.
  */
 
 // ==========================================
-// 1. CORE PSYCHOLOGICAL METRICS & THE 5 Cs
+// 1. CORE PSYCHOLOGICAL METRICS, 5 Cs & AFFINITIES
 // ==========================================
 
 export interface FiveCMetrics {
-  compromiso: number;       // C1: Commitment [0, 100]
-  confianza: number;        // C2: Psychological safety / trust [0, 100]
-  coordinacion: number;     // C3: Synchronization and workflow [0, 100]
-  comunicacion: number;     // C4: Clarity and assertiveness [0, 100]
-  complementariedad: number;// C5: Synergistic skill matching [0, 100]
+  compromiso: number;        // C1: Commitment [0, 100]
+  confianza: number;         // C2: Psychological safety / trust [0, 100]
+  coordinacion: number;      // C3: Synchronization and workflow [0, 100]
+  comunicacion: number;      // C4: Clarity and assertiveness [0, 100]
+  complementariedad: number; // C5: Synergistic skill matching [0, 100]
 }
 
 export type FiveCKey = keyof FiveCMetrics;
 
+export type NPCKey = 'elena' | 'david' | 'marcos' | 'sofia' | 'lucas';
+
+export interface NPCAffinities {
+  elena: number;  // Agile / Transparencia [0, 100]
+  david: number;  // Negocio / Asertividad [0, 100]
+  marcos: number; // Técnico / Lógica [0, 100]
+  sofia: number;  // Diseño / Empatía [0, 100]
+  lucas: number;  // Junior / Mentoría [0, 100]
+}
+
+export interface StatChangeToast {
+  id: string;
+  statKey: string;
+  label: string;
+  delta: number;
+  newValue: number;
+  category: 'IE' | '5C' | 'STRESS' | 'TIME' | 'AFFINITY';
+  /** Invertir semántica visual para el Estrés (subir estrés es negativo) */
+  isBeneficial: boolean;
+  timestamp: number;
+}
+
+export interface InterruptionRecord {
+  nodeId: string;
+  title: string;
+  speaker: string;
+  act: SprintNumber;
+  timeLostMinutes: number;
+  optionChosen: string;
+}
+
 export type IEClimateTier =
-  | 'EMPATHIC_SYNERGY'     // IE 75 - 100: +25% negotiation ease, spontaneous bug warnings
-  | 'PROFESSIONAL_CLIMATE'  // IE 35 - 74: Neutral standard workplace atmosphere
-  | 'HOSTILE_ENVIRONMENT';  // IE 0 - 34: Cold/harsh responses, strict PR rejections, hidden bugs
+  | 'EMPATHIC_SYNERGY'
+  | 'PROFESSIONAL_CLIMATE'
+  | 'HOSTILE_ENVIRONMENT';
 
-// Canonical uppercase tools
 export type CanonicalTimeTool = 'POMODORO' | 'EISENHOWER' | 'PARETO' | 'GANTT';
-
-// Flexible union for existing codebase compatibility (storyNodes.ts and EisenhowerMatrix.tsx)
 export type TimeTool = CanonicalTimeTool | 'pomodoro' | 'eisenhower' | 'pareto' | 'gantt';
 export type ProductivityTool = CanonicalTimeTool;
 
@@ -74,7 +101,7 @@ export type ActiveModal =
   | 'ENDING';
 
 // ==========================================
-// 4. STAT MODIFIERS LAYER (RPG Pattern 1)
+// 4. STAT MODIFIERS LAYER
 // ==========================================
 
 export interface StatModifier {
@@ -102,15 +129,15 @@ export type CommunicationStyle =
   | 'SHARED_LEADERSHIP';
 
 export type EndingType =
-  | 'FIRED_GAME_OVER'            // Strike 3 limit reached
-  | 'BURNOUT_SOLITARY_WOLF'      // Strikes = 0, ICE < 35, IE < 35
-  | 'EXPLOITED_PEOPLE_PLEASER'    // Accepted scope creep with 0 assertiveness
-  | 'SOLID_DEVELOPER'            // Balanced survivor: IE 40-74, ICE 45-74, 2+ tools
-  | 'TECH_LEAD_EXCELLENCE'       // IE >= 75, all 5Cs >= 75, all 4 tools
-  | 'STARTUP_COFOUNDERS';         // 5Cs >= 90, stood firm against David's abuse
+  | 'FIRED_GAME_OVER'
+  | 'BURNOUT_SOLITARY_WOLF'
+  | 'EXPLOITED_PEOPLE_PLEASER'
+  | 'SOLID_DEVELOPER'
+  | 'TECH_LEAD_EXCELLENCE'
+  | 'STARTUP_COFOUNDERS';
 
 // ==========================================
-// 6. QUEST & OBJECTIVE SYSTEM (RPG Pattern 3)
+// 6. QUEST & OBJECTIVE SYSTEM
 // ==========================================
 
 export type QuestState = 'available' | 'active' | 'complete' | 'failed' | 'turned_in';
@@ -176,21 +203,21 @@ export interface KanbanTask {
   description: string;
   act: SprintNumber;
   status: KanbanStatus;
-  progressPercent: number; // 0 to 100
+  progressPercent: number;
   estimatedMinutes: number;
   urgency: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   importance: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-  technicalDebtRisk: number; // 0 to 100
+  technicalDebtRisk: number;
   assignedNpc?: string;
 }
 
 // ==========================================
-// 8. CUSTOM SKINS & ASSET PIPELINE (Phase 2)
+// 8. CUSTOM SKINS & ASSET PIPELINE
 // ==========================================
 
 export interface SkinLayerItem {
   sprite: string;
-  tint?: string; // Hex color code e.g. '#4A2E1B'
+  tint?: string;
 }
 
 export interface SkinConfig {
@@ -211,12 +238,17 @@ export interface SkinConfig {
 }
 
 // ==========================================
-// 9. SERIALIZATION & SAVES (Save Pattern 1)
+// 9. SERIALIZATION & SAVES
 // ==========================================
 
 export interface GameStateSnapshot {
   emotionalIntelligence: number;
   fiveCs: FiveCMetrics;
+  affinities?: NPCAffinities;
+  teamStress?: number;
+  timeManagement?: number;
+  interruptionHistory?: InterruptionRecord[];
+  triggeredInterruptions?: string[];
   strikes: StrikeLevel;
   currentSprint: SprintNumber;
   dayTimeMinutes: number;

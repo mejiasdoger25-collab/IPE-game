@@ -1,17 +1,14 @@
 /**
  * src/ui/WorkstationModal.tsx
- * Interactive Workstation & Kanban Ticket execution view for DevLife RPG.
- * Implements:
- * - 4-column Kanban lifecycle: To-Do -> In Progress -> Code Review -> Done
- * - Persistent store state (useGameStore.tasks) preserved across modal toggles
- * - Progressive tool gating: POMODORO, EISENHOWER, PARETO, GANTT locked until unlocked via narrative or 50 Temporal Mastery Points
- * - Harmonized warm light brown, stone cream, and taupe editorial aesthetic with Inter black typography
- * - Key clack audio feedback on programming & state advancement
+ * Estación de Trabajo Kanban FinTrack 2.0 rediseñada con la estética Retro 16-Bit
+ * del juego (rpg-box-dark, rpg-box-cream, rpg-btn, font-arcade y font-dialogue).
  */
 
 import React, { useState } from 'react';
 import { useGameStore } from '../state/useGameStore';
+import { useQuestStore } from '../state/useQuestStore';
 import type { KanbanStatus, CanonicalTimeTool } from '../types/game';
+import { ACT_INTERRUPTIONS, STORY_NODES } from '../data/storyNodes';
 import { PomodoroTimer } from './tools/PomodoroTimer';
 import { EisenhowerMatrix } from './tools/EisenhowerMatrix';
 import { ParetoAnalyzer } from './tools/ParetoAnalyzer';
@@ -22,41 +19,49 @@ export const WorkstationModal: React.FC = () => {
   const {
     currentSprint,
     closeModal,
+    setActiveModal,
     tasks,
     advanceTask,
     unlockedTools,
     temporalMasteryPoints,
     unlockToolWithPoints,
+    triggeredInterruptions,
   } = useGameStore();
+
+  const { setActiveStoryNode, completedStoryNodeIds } = useQuestStore();
 
   const [activeSubTool, setActiveSubTool] = useState<
     'NONE' | 'POMODORO' | 'EISENHOWER' | 'PARETO' | 'GANTT'
   >('NONE');
 
   const currentSprintTasks = tasks.filter((t) => t.act === currentSprint);
+  const sprintInterruptionIds = ACT_INTERRUPTIONS[currentSprint] || [];
+
+  const handleTriggerSpecificInterruption = (nodeId: string) => {
+    AudioManager.playNotificationPing();
+    setActiveStoryNode(nodeId);
+    setActiveModal('DIALOGUE');
+  };
 
   const handleToolClick = (tool: CanonicalTimeTool, displayName: string) => {
     AudioManager.playKeyClack();
     if (unlockedTools.includes(tool)) {
       setActiveSubTool(tool);
-    } else {
-      // Allow unlocking with temporalMasteryPoints (50 pts)
-      if (temporalMasteryPoints >= 50) {
-        const confirmUnlock = window.confirm(
-          `🔒 ${displayName} está bloqueada.\n¿Deseas desbloquearla ahora usando 50 Puntos de Maestría Temporal? (Tienes: ${temporalMasteryPoints} pts)`
-        );
-        if (confirmUnlock) {
-          const success = unlockToolWithPoints(tool, 50);
-          if (success) {
-            AudioManager.playNotificationPing();
-            setActiveSubTool(tool);
-          }
+    } else if (temporalMasteryPoints >= 50) {
+      const confirmUnlock = window.confirm(
+        `🔒 ${displayName} está bloqueada.\n¿Deseas desbloquearla ahora usando 50 Puntos de Maestría Temporal? (Tienes: ${temporalMasteryPoints} pts)`
+      );
+      if (confirmUnlock) {
+        const success = unlockToolWithPoints(tool, 50);
+        if (success) {
+          AudioManager.playNotificationPing();
+          setActiveSubTool(tool);
         }
-      } else {
-        alert(
-          `🔒 ${displayName} está bloqueada.\nRequiere desbloquearse en la historia (ej. ayudando a compañeros o en la Daily) o con 50 Puntos de Maestría Temporal (actual: ${temporalMasteryPoints} pts).`
-        );
       }
+    } else {
+      alert(
+        `🔒 ${displayName} está bloqueada.\nDesbloquéala tomando buenas decisiones en los diálogos o reuniendo 50 Puntos de Maestría Temporal (actual: ${temporalMasteryPoints} pts).`
+      );
     }
   };
 
@@ -65,74 +70,66 @@ export const WorkstationModal: React.FC = () => {
     advanceTask(taskId);
   };
 
-  const columns: Array<{ id: KanbanStatus; label: string; color: string; badgeColor: string }> = [
-    { id: 'TODO', label: 'Por Hacer (To-Do)', color: 'text-stone-700', badgeColor: 'bg-stone-200 text-stone-800' },
-    { id: 'IN_PROGRESS', label: 'En Progreso (Coding)', color: 'text-[#2C4A6F]', badgeColor: 'bg-[#E3E8EC] text-[#2C4A6F]' },
-    { id: 'CODE_REVIEW', label: 'Code Review (PR)', color: 'text-[#8C5E19]', badgeColor: 'bg-[#F5EED8] text-[#8C5E19]' },
-    { id: 'DONE', label: 'Completado (Done)', color: 'text-[#2F5233]', badgeColor: 'bg-[#E2EBD8] text-[#2F5233]' },
+  const columns: Array<{ id: KanbanStatus; label: string; headerColor: string }> = [
+    { id: 'TODO', label: '1. POR HACER (TO-DO)', headerColor: 'text-slate-300 border-slate-600' },
+    { id: 'IN_PROGRESS', label: '2. EN PROGRESO (WIP)', headerColor: 'text-sky-300 border-sky-500' },
+    { id: 'CODE_REVIEW', label: '3. CODE REVIEW (PR)', headerColor: 'text-amber-300 border-amber-500' },
+    { id: 'DONE', label: '4. COMPLETADO (DONE)', headerColor: 'text-emerald-300 border-emerald-500' },
   ];
 
   const toolButtons: Array<{ id: CanonicalTimeTool; label: string; icon: string }> = [
-    { id: 'POMODORO', label: 'Pomodoro', icon: '🍅' },
-    { id: 'EISENHOWER', label: 'Eisenhower 2x2', icon: '📊' },
-    { id: 'PARETO', label: 'Pareto 80/20', icon: '⚖️' },
-    { id: 'GANTT', label: 'Gantt', icon: '📅' },
+    { id: 'POMODORO', label: 'POMODORO', icon: '🍅' },
+    { id: 'EISENHOWER', label: 'EISENHOWER', icon: '🧭' },
+    { id: 'PARETO', label: 'PARETO 80/20', icon: '🎯' },
+    { id: 'GANTT', label: 'GANTT', icon: '📊' },
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/60 backdrop-blur-xs p-4 font-sans select-none">
-      {/* Sub-tool overlay modals */}
+    <div className="absolute inset-0 z-40 flex items-center justify-center bg-slate-950/85 p-3 md:p-5 select-none overflow-y-auto">
       {activeSubTool === 'POMODORO' && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-stone-950/70">
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-stone-950/80">
           <PomodoroTimer onClose={() => setActiveSubTool('NONE')} />
         </div>
       )}
       {activeSubTool === 'EISENHOWER' && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-stone-950/70">
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-stone-950/80">
           <EisenhowerMatrix onClose={() => setActiveSubTool('NONE')} />
         </div>
       )}
       {activeSubTool === 'PARETO' && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-stone-950/70">
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-stone-950/80">
           <ParetoAnalyzer onClose={() => setActiveSubTool('NONE')} />
         </div>
       )}
       {activeSubTool === 'GANTT' && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-stone-950/70">
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-stone-950/80">
           <GanttChart onClose={() => setActiveSubTool('NONE')} />
         </div>
       )}
 
-      {/* Main Workstation Container */}
-      <div className="bg-[#F4F1EA] border border-[#D6CFC2] rounded-3xl p-6 max-w-5xl w-full text-stone-950 shadow-2xl space-y-5 flex flex-col max-h-[90vh]">
-        {/* Header */}
-        <div className="flex flex-wrap justify-between items-center border-b border-[#D6CFC2] pb-3 gap-2">
+      {/* Contenedor Principal del Kanban en estética Pixel-Art RPG */}
+      <div className="rpg-box-dark bg-[#111625] p-4 md:p-5 max-w-6xl w-full space-y-3 flex flex-col max-h-full overflow-hidden">
+        {/* Cabecera del Kanban */}
+        <div className="flex flex-wrap justify-between items-center border-b-2 border-slate-700 pb-3 gap-2">
           <div>
-            <h2 className="text-xl font-extrabold text-stone-950 flex items-center space-x-2">
-              <span>💻 Estación de Trabajo — Tablero Kanban FinTrack 2.0 (Sprint {currentSprint})</span>
+            <span className="font-arcade text-[8px] text-amber-400 uppercase block">
+              NOVASOFT WORKSTATION OS · SPRINT {currentSprint}
+            </span>
+            <h2 className="font-arcade text-xs md:text-sm text-white mt-1">
+              💻 TABLERO KANBAN · FINTRACK 2.0
             </h2>
-            <p className="text-xs text-stone-600">
-              Desarrolla tickets, sube Pull Requests y utiliza herramientas de gestión temporal.
-            </p>
           </div>
 
-          {/* Productivity Tools Launch Bar with Progressive Gating */}
-          <div className="flex items-center space-x-2">
+          {/* Barra de Herramientas Desbloqueables */}
+          <div className="flex flex-wrap items-center gap-1.5">
             {toolButtons.map((tb) => {
               const isUnlocked = unlockedTools.includes(tb.id);
               return (
                 <button
                   key={tb.id}
                   onClick={() => handleToolClick(tb.id, tb.label)}
-                  title={
-                    isUnlocked
-                      ? `Abrir ${tb.label}`
-                      : `Bloqueado. Desbloquear con 50 pts de Maestría Temporal (Tienes: ${temporalMasteryPoints} pts)`
-                  }
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center space-x-1 border ${
-                    isUnlocked
-                      ? 'bg-[#E6DEC8] hover:bg-[#D8CCB0] active:bg-[#CBBBA0] text-stone-950 border-[#C2B299]'
-                      : 'bg-stone-200/80 text-stone-500 border-stone-300 hover:bg-stone-300/80'
+                  className={`rpg-btn px-2.5 py-1.5 font-arcade text-[8px] cursor-pointer flex items-center gap-1 ${
+                    isUnlocked ? 'bg-amber-300 text-stone-950' : 'opacity-75'
                   }`}
                 >
                   <span>{isUnlocked ? tb.icon : '🔒'}</span>
@@ -140,31 +137,58 @@ export const WorkstationModal: React.FC = () => {
                 </button>
               );
             })}
-
             <button
               onClick={() => {
                 AudioManager.playKeyClack();
                 closeModal();
               }}
-              className="text-stone-500 hover:text-stone-950 text-lg font-bold ml-2 cursor-pointer"
+              className="rpg-btn px-3 py-1.5 font-arcade text-[9px] bg-rose-600 text-white cursor-pointer ml-1"
             >
-              ✕
+              [X] CERRAR
             </button>
           </div>
         </div>
 
-        {/* 4-Column Kanban Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 flex-1 overflow-y-auto">
+        {/* Barra de las 5 Interrupciones del Sprint */}
+        <div className="rpg-box-cream px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+          <span className="font-arcade text-[8px] text-stone-900">
+            ⚡ EVENTOS E INTERRUPCIONES DEL SPRINT {currentSprint}:
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {sprintInterruptionIds.map((nodeId, idx) => {
+              const node = STORY_NODES[nodeId];
+              const isDone =
+                triggeredInterruptions.includes(nodeId) || completedStoryNodeIds.includes(nodeId);
+              return (
+                <button
+                  key={nodeId}
+                  onClick={() => handleTriggerSpecificInterruption(nodeId)}
+                  className={`px-2.5 py-1 border-2 font-arcade text-[7px] cursor-pointer transition-all ${
+                    isDone
+                      ? 'bg-[#2b2118] text-emerald-300 border-black'
+                      : 'bg-[#e5dcc5] hover:bg-amber-300 text-stone-900 border-[#2b2118]'
+                  }`}
+                >
+                  {isDone ? '✓ ' : `${idx + 1}. `}
+                  {node?.speaker.split(' ')[0] || `EVENTO ${idx + 1}`}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Rejilla de 4 Columnas Estilo Retro */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 flex-1 overflow-y-auto pr-1">
           {columns.map((col) => {
             const colTasks = currentSprintTasks.filter((t) => t.status === col.id);
             return (
               <div
                 key={col.id}
-                className="bg-[#EBE7DF] rounded-2xl border border-[#D1C9BC] p-3 flex flex-col space-y-3 shadow-xs"
+                className="bg-[#181e31] border-2 border-slate-700 p-2.5 flex flex-col space-y-2.5"
               >
-                <div className="flex justify-between items-center border-b border-[#D6CFC2] pb-2">
-                  <span className={`text-xs font-extrabold ${col.color}`}>{col.label}</span>
-                  <span className={`text-xs font-mono font-bold px-1.5 py-0.5 rounded shadow-xs ${col.badgeColor}`}>
+                <div className={`flex justify-between items-center border-b-2 pb-1.5 ${col.headerColor}`}>
+                  <span className="font-arcade text-[8px]">{col.label}</span>
+                  <span className="font-arcade text-[8px] bg-slate-900 px-1.5 py-0.5 text-white border border-slate-600">
                     {colTasks.length}
                   </span>
                 </div>
@@ -173,64 +197,73 @@ export const WorkstationModal: React.FC = () => {
                   {colTasks.map((t) => (
                     <div
                       key={t.id}
-                      className="p-3 rounded-xl bg-[#FDFBF7] border border-[#D6CFC2] hover:border-[#B5A585] text-xs space-y-2 shadow-xs transition-all"
+                      className="rpg-box-cream p-3 space-y-2"
                     >
                       <div className="flex justify-between items-start gap-1">
-                        <span className="font-bold text-stone-950 leading-snug">{t.title}</span>
+                        <span className="font-arcade text-[8px] text-stone-950 leading-snug">
+                          {t.title}
+                        </span>
                         {t.urgency === 'CRITICAL' && (
-                          <span className="text-[9px] font-mono font-black text-[#C2410C] bg-[#FBE5E1] px-1 py-0.5 rounded border border-[#EBB3A9]">
+                          <span className="font-arcade text-[6px] bg-rose-600 text-white px-1.5 py-0.5 border border-black shrink-0">
                             CRÍTICO
                           </span>
                         )}
                       </div>
-                      <p className="text-[11px] text-stone-600 leading-relaxed">{t.description}</p>
 
-                      {/* Progress bar */}
+                      <p className="font-dialogue text-lg text-stone-800 leading-tight">
+                        {t.description}
+                      </p>
+
+                      {t.assignedNpc && (
+                        <div className="font-arcade text-[7px] text-stone-600">
+                          RESP: {t.assignedNpc.toUpperCase()}
+                        </div>
+                      )}
+
                       {t.status === 'IN_PROGRESS' && (
                         <div className="space-y-1">
-                          <div className="flex justify-between text-[10px] font-mono font-semibold text-stone-600">
-                            <span>Progreso:</span>
+                          <div className="flex justify-between font-arcade text-[7px] text-stone-800">
+                            <span>PROGRESO:</span>
                             <span>{t.progressPercent}%</span>
                           </div>
-                          <div className="w-full h-1.5 bg-stone-200 rounded-full overflow-hidden">
+                          <div className="w-full h-2.5 bg-stone-900 border border-black p-0.5 relative">
                             <div
-                              className="h-full bg-[#4C7C59] transition-all duration-300"
+                              className="h-full bg-emerald-400 transition-all duration-300"
                               style={{ width: `${t.progressPercent}%` }}
                             />
+                            <div className="absolute inset-0 stat-bar-segmented pointer-events-none" />
                           </div>
                         </div>
                       )}
 
-                      {/* Action Button */}
-                      {t.status !== 'DONE' && (
+                      {t.status !== 'DONE' ? (
                         <button
                           type="button"
                           onClick={() => handleAdvanceTask(t.id)}
-                          className={`w-full py-1.5 rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer ${
+                          className={`rpg-btn w-full py-1.5 font-arcade text-[8px] cursor-pointer ${
                             t.status === 'TODO'
-                              ? 'bg-[#E6DEC8] hover:bg-[#D8CCB0] text-stone-950 border border-[#C2B299]'
+                              ? 'bg-[#e5dcc5] text-stone-950'
                               : t.status === 'IN_PROGRESS'
-                              ? 'bg-[#D5E2D2] hover:bg-[#C2D6BE] text-[#2F5233] border border-[#AEC9A9]'
-                              : 'bg-[#F2E8D5] hover:bg-[#E5D7BF] text-[#7C5117] border border-[#D8C2A0]'
+                              ? 'bg-emerald-400 text-stone-950'
+                              : 'bg-amber-300 text-stone-950'
                           }`}
                         >
                           {t.status === 'TODO'
-                            ? '▶ Empezar Desarrollo'
+                            ? '▶ EMPEZAR TAREA'
                             : t.status === 'IN_PROGRESS'
-                            ? '💻 Programar (+Progreso / 20m)'
-                            : '🔍 Solicitar Code Review'}
+                            ? '⌨️ PROGRAMAR (+WIP)'
+                            : '🔍 SUBIR PULL REQUEST'}
                         </button>
-                      )}
-
-                      {t.status === 'DONE' && (
-                        <span className="inline-block text-[10px] font-mono font-bold text-[#2F5233] bg-[#E2EBD8] px-2 py-0.5 rounded border border-[#B3C99C] shadow-xs">
-                          ✓ Completado y Fusionado
-                        </span>
+                      ) : (
+                        <div className="bg-[#2b2118] text-emerald-300 font-arcade text-[7px] px-2 py-1 text-center border border-black">
+                          ✓ FUSIONADO EN MAIN
+                        </div>
                       )}
                     </div>
                   ))}
+
                   {colTasks.length === 0 && (
-                    <div className="text-center py-8 text-xs text-stone-500 italic">
+                    <div className="text-center py-6 font-dialogue text-lg text-slate-500">
                       Sin tickets en esta columna
                     </div>
                   )}

@@ -1,14 +1,13 @@
 /**
  * src/core/DialogueRunner.ts
- * Sandboxed dialogue graph runner for Sprint Cero / DevLife RPG.
- * Follows:
- * - skills/dialogue-systems/SKILL.md: Safe state mutations on transition, preventing double deltas
- * - skills/visual-novel/SKILL.md: Dynamic IE branching, internal monologues, and visual feedback toasts
+ * Motor de diálogo con memoria persistente de decisiones para evitar que los NPCs
+ * repitan preguntas ya respondidas y mantener la repercusión en la partida.
  */
 
 import { useGameStore } from '../state/useGameStore';
 import { useQuestStore } from '../state/useQuestStore';
 import { STORY_NODES, type StoryNode, type DialogueOption } from '../data/storyNodes';
+import type { SprintNumber } from '../types/game';
 
 export interface DialogueFeedbackDelta {
   label: string;
@@ -19,28 +18,84 @@ export interface DialogueFeedbackDelta {
 export interface ChoiceExecutionResult {
   consequenceText: string;
   nextNodeId: string | null;
+  returnModal?: 'WORKSTATION' | 'NONE';
   deltas: DialogueFeedbackDelta[];
   unlockedTool?: string;
   causedStrike?: number;
 }
 
 export class DialogueRunner {
-  // Set to prevent double-applying deltas if a node transition is repeated
   private static appliedTransitions = new Set<string>();
 
-  /**
-   * Retrieves the current story node by ID.
-   */
   public static getNode(nodeId: string): StoryNode | null {
     return STORY_NODES[nodeId] || null;
   }
 
   /**
-   * Resolves dynamic speaker text based on the player's current Emotional Intelligence (IE).
-   * - high: IE >= 60
-   * - normal: IE 40 - 59
-   * - low: IE < 40
+   * Comprueba si un nodo de historia ya fue respondido anteriormente por el jugador
    */
+  public static isNodeCompleted(nodeId: string): boolean {
+    const quests = useQuestStore.getState();
+    return quests.completedStoryNodeIds.includes(nodeId);
+  }
+
+  /**
+   * Obtiene la opción que el jugador eligió en ese nodo para recordar su repercusión
+   */
+  public static getRecordedOption(nodeId: string): DialogueOption | null {
+    const quests = useQuestStore.getState();
+    const node = STORY_NODES[nodeId];
+    if (!node) return null;
+
+    const historyEntry = [...quests.dialogueHistory]
+      .reverse()
+      .find((h) => h.nodeId === nodeId);
+
+    if (!historyEntry) return null;
+    return node.options.find((o) => o.id === historyEntry.optionId) || null;
+  }
+
+  /**
+   * Resuelve dinámicamente qué nodo de diálogo corresponde a cada NPC según el Sprint actual
+   * y qué eventos aún no han sido respondidos.
+   */
+  public static resolveDynamicNodeForNPC(npcId: string, sprint: SprintNumber): string {
+    const completed = useQuestStore.getState().completedStoryNodeIds;
+
+    const candidatesByNpc: Record<string, Record<SprintNumber, string[]>> = {
+      elena_scrum: {
+        1: ['act1_daily', 'act1_int5_elena', 'scene_1_1_daily'],
+        2: ['act2_daily'],
+        3: ['act3_daily', 'act3_int1_bug'],
+      },
+      lucas_junior: {
+        1: ['act1_int1_lucas', 'scene_1_1_daily'],
+        2: ['act2_int3_lucas'],
+        3: ['act3_int4_lucas'],
+      },
+      marcos_senior: {
+        1: ['act1_int2_marcos', 'scene_1_2_marcos_pr'],
+        2: ['act2_int4_marcos', 'act2_int1_conflict'],
+        3: ['act3_int2_marcos'],
+      },
+      sofia_ux: {
+        1: ['act1_int3_sofia'],
+        2: ['act2_int1_conflict', 'scene_2_2_meeting_war'],
+        3: ['act3_int3_sofia'],
+      },
+      david_po: {
+        1: ['act1_int4_david'],
+        2: ['act2_daily', 'act2_int2_david', 'scene_2_1_david_scope'],
+        3: ['act3_int5_david', 'scene_3_1_black_friday'],
+      },
+    };
+
+    const list = candidatesByNpc[npcId]?.[sprint] || ['act1_daily'];
+    // Devuelve el primer nodo pendiente de este Sprint; si todos están hechos, devuelve el último para mostrar su repercusión
+    const firstPending = list.find((id) => !completed.includes(id));
+    return firstPending || list[list.length - 1];
+  }
+
   public static getSpeakerLine(node: StoryNode): string {
     const ie = useGameStore.getState().getEffectiveIE();
     if (ie >= 60) return node.dialogueByIE.high;
@@ -48,40 +103,36 @@ export class DialogueRunner {
     return node.dialogueByIE.low;
   }
 
-  /**
-   * Checks if an emotional self-regulation pre-step is required
-   * (e.g. entering conflict scene 2.2 with IE < 40 or active OPEN_CONFLICT_BACKEND flag).
-   */
   public static isSelfRegulationRequired(node: StoryNode): boolean {
-    if (node.id !== 'scene_2_2_meeting_war') return false;
+    if (this.isNodeCompleted(node.id)) return false;
+    if (node.id !== 'scene_2_2_meeting_war' && node.id !== 'act2_int1_conflict') return false;
     const game = useGameStore.getState();
     const ie = game.getEffectiveIE();
-    const hasConflict = Boolean(game.flags['OPEN_CONFLICT_BACKEND']);
+    const hasConflict = Boolean(game.flags['OPEN_CONFLICT_BACKEND']) || game.teamStress >= 70;
     return ie < 40 || hasConflict;
   }
 
-  /**
-   * Executes a dialogue option, safely mutating state, unlocking tools, and triggering events.
-   */
   public static executeOption(
     nodeId: string,
     option: DialogueOption
   ): ChoiceExecutionResult {
-    const transitionKey = `${nodeId}->${option.id}`;
     const game = useGameStore.getState();
     const quests = useQuestStore.getState();
+    const currentNode = STORY_NODES[nodeId];
+
+    const alreadyCompleted =
+      this.appliedTransitions.has(nodeId) || quests.completedStoryNodeIds.includes(nodeId);
 
     const deltas: DialogueFeedbackDelta[] = [];
 
-    // Guard against double applying state mutations
-    if (!this.appliedTransitions.has(transitionKey)) {
-      this.appliedTransitions.add(transitionKey);
+    if (!alreadyCompleted) {
+      this.appliedTransitions.add(nodeId);
 
       // 1. IE Delta
       if (option.ieDelta !== 0) {
         game.updateIE(option.ieDelta);
         deltas.push({
-          label: 'Inteligencia Emocional (IE)',
+          label: 'EMPATÍA (IE)',
           value: option.ieDelta,
           isPositive: option.ieDelta > 0,
         });
@@ -93,7 +144,7 @@ export class DialogueRunner {
         Object.entries(option.fiveCDelta).forEach(([key, val]) => {
           if (val && val !== 0) {
             deltas.push({
-              label: `C: ${key.toUpperCase()}`,
+              label: `5C ${key.toUpperCase()}`,
               value: val,
               isPositive: val > 0,
             });
@@ -101,35 +152,91 @@ export class DialogueRunner {
         });
       }
 
-      // 3. Workday Time Cost
+      // 3. NPC Affinities Deltas
+      if (option.affinityDelta) {
+        game.updateAffinities(option.affinityDelta);
+        Object.entries(option.affinityDelta).forEach(([npc, val]) => {
+          if (val && val !== 0) {
+            deltas.push({
+              label: `AFINIDAD ${npc.toUpperCase()}`,
+              value: val,
+              isPositive: val > 0,
+            });
+          }
+        });
+      }
+
+      // 4. Barra de Estrés del Equipo
+      if (option.stressDelta && option.stressDelta !== 0) {
+        game.updateStress(option.stressDelta);
+        deltas.push({
+          label: 'ESTRÉS EQUIPO',
+          value: option.stressDelta,
+          isPositive: option.stressDelta < 0,
+        });
+      }
+
+      // 5. Gestión del Tiempo
+      if (option.timeManagementDelta && option.timeManagementDelta !== 0) {
+        game.updateTimeManagement(option.timeManagementDelta);
+        deltas.push({
+          label: 'TIEMPO',
+          value: option.timeManagementDelta,
+          isPositive: option.timeManagementDelta > 0,
+        });
+      }
+
+      // 6. Workday Time Cost
       if (option.timeCostMinutes > 0) {
         game.advanceTime(option.timeCostMinutes);
       }
 
-      // 4. Flags
+      // 7. Registrar Interrupción o decisión de nodo
+      if (currentNode?.isInterruption) {
+        game.recordInterruption({
+          nodeId,
+          title: currentNode.title,
+          speaker: currentNode.speaker,
+          act: currentNode.act,
+          timeLostMinutes: option.timeCostMinutes,
+          optionChosen: option.styleTag,
+        });
+      } else {
+        // También marcar nodos de Daily como procesados
+        game.recordInterruption({
+          nodeId,
+          title: currentNode?.title || nodeId,
+          speaker: currentNode?.speaker || 'Equipo',
+          act: currentNode?.act || game.currentSprint,
+          timeLostMinutes: option.timeCostMinutes,
+          optionChosen: option.styleTag,
+        });
+      }
+
+      // 8. Flags
       if (option.setsFlag) {
         game.setFlag(option.setsFlag, true);
       }
 
-      // 5. Tool Unlocks
+      // 9. Tool Unlocks
       if (option.unlocksTool) {
         game.unlockTool(option.unlocksTool);
       }
 
-      // 6. Strikes
+      // 10. Strikes
       if (option.causesStrike && option.causesStrike > 0) {
         for (let i = 0; i < option.causesStrike; i++) {
           game.addStrike();
         }
       }
 
-      // 7. Ending Evaluation Trigger
+      // 11. Ending Evaluation Trigger
       if (option.triggersEndingEvaluation) {
         const ending = game.evaluateCurrentEnding();
         game.triggerEnding(ending);
       }
 
-      // 8. Record choice and trigger Quest Event Machine
+      // 12. Record choice permanently in QuestStore
       quests.recordDialogueChoice(nodeId, option.id);
       quests.onGameEvent({
         type: 'DIALOGUE_COMPLETE',
@@ -144,15 +251,13 @@ export class DialogueRunner {
     return {
       consequenceText: option.consequenceText,
       nextNodeId: option.nextNodeId || null,
+      returnModal: currentNode?.returnModal,
       deltas,
       unlockedTool: option.unlocksTool,
       causedStrike: option.causesStrike,
     };
   }
 
-  /**
-   * Resets transition cache upon new game or reload
-   */
   public static resetTransitions(): void {
     this.appliedTransitions.clear();
   }

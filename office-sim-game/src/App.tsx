@@ -1,8 +1,9 @@
 /**
  * src/App.tsx
- * Master Application Shell con Menú Principal Arcade 16-Bit Rebrandeado,
- * desfile de sprites en vivo (SkinBuilder), detección de guardado y ciclo de jornada.
+ * Master Application Shell con HUD siempre visible en la parte superior
+ * y el área de Phaser + Modales encajada debajo sin solapamientos.
  */
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useGameStore } from './state/useGameStore';
 import { useQuestStore } from './state/useQuestStore';
@@ -34,9 +35,10 @@ export const App: React.FC = () => {
     emotionalIntelligence,
     updateIE,
     updateFiveC,
+    updateAffinities,
+    updateStress,
     strikes,
     addStrike,
-    triggerEnding,
     getTeamVelocity,
     tasks,
     skinConfig,
@@ -52,25 +54,22 @@ export const App: React.FC = () => {
   const [debugPanelOpen, setDebugPanelOpen] = useState<boolean>(false);
   const [walkFrame, setWalkFrame] = useState<number>(0);
 
-  // Referencias de canvas para el desfile de personajes en vivo en el Menú Principal
   const castCanvasRefs = useRef<Record<string, HTMLCanvasElement | null>>({});
 
-  // Inyectar Google Fonts de forma segura por si el navegador retrasa el @import
   useEffect(() => {
     const id = 'retro-pixel-fonts';
     if (!document.getElementById(id)) {
       const link = document.createElement('link');
       link.id = id;
       link.rel = 'stylesheet';
-      link.href = 'https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap';
+      link.href =
+        'https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap';
       document.head.appendChild(link);
     }
-    // Comprobar si existe alguna partida guardada
     const slots = SaveManager.getSlotsMetadata();
     setHasSavedGame(slots.some((s) => !s.isEmpty));
   }, [hasStarted]);
 
-  // Animación de caminata de los personajes en la pantalla de título
   useEffect(() => {
     if (hasStarted) return;
     const timer = setInterval(() => {
@@ -79,7 +78,6 @@ export const App: React.FC = () => {
     return () => clearInterval(timer);
   }, [hasStarted]);
 
-  // Pintar los 6 sprites en el escaparate del Menú Principal
   useEffect(() => {
     if (hasStarted) return;
     const showcaseCast = [
@@ -99,26 +97,21 @@ export const App: React.FC = () => {
     });
   }, [hasStarted, walkFrame, skinConfig]);
 
-  // Conectar cámara de Phaser con FeedbackManager
   const handleSceneReady = useCallback((scene: OfficeScene) => {
     FeedbackManager.registerCameraHook((intensity, duration) => {
       scene.triggerCameraShake(intensity, duration);
     });
   }, []);
 
-  // Reloj de la jornada laboral en tiempo real (09:00 a 18:00)
   useEffect(() => {
     if (!hasStarted || isPaused || activeModal !== 'NONE') return;
-
     const interval = setInterval(() => {
       const velocity = getTeamVelocity();
       advanceTime(Math.max(1, Math.round(1 * velocity)));
     }, 1000);
-
     return () => clearInterval(interval);
   }, [hasStarted, isPaused, activeModal, advanceTime, getTeamVelocity]);
 
-  // Evaluación de fin de jornada a las 18:00 (1080 minutos)
   useEffect(() => {
     if (dayTimeMinutes >= 1080 && hasStarted && activeModal === 'NONE') {
       const state = useGameStore.getState();
@@ -129,7 +122,6 @@ export const App: React.FC = () => {
         2: 't2_payment_gateway',
         3: 't3_preprod_db_recovery',
       };
-
       const criticalTaskId = criticalTaskMap[currentSprint];
       const task = tasks.find((t) => t.id === criticalTaskId);
 
@@ -149,14 +141,15 @@ export const App: React.FC = () => {
     }
   }, [dayTimeMinutes, hasStarted, activeModal, currentSprint, tasks]);
 
-  // Acciones del Menú Principal
   const handleStartNewGame = useCallback(() => {
     AudioManager.playNotificationPing();
     DialogueRunner.resetTransitions();
     resetGame();
     resetQuests();
     setHasStarted(true);
-  }, [resetGame, resetQuests]);
+    setActiveStoryNode('act1_daily');
+    setActiveModal('DIALOGUE');
+  }, [resetGame, resetQuests, setActiveStoryNode, setActiveModal]);
 
   const handleContinueGame = useCallback(() => {
     AudioManager.playNotificationPing();
@@ -212,7 +205,6 @@ export const App: React.FC = () => {
     },
   ];
 
-  // Navegación con teclado en el Menú Principal + Inspector F2 global
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       AudioManager.init();
@@ -246,60 +238,48 @@ export const App: React.FC = () => {
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#0b0e17] flex flex-col select-none text-slate-100">
-      {/* =====================================================================
-          MENÚ PRINCIPAL REBRANDEADO (ESTÉTICA ARCADE 16-BIT / CONSOLA RETRO)
-         ===================================================================== */}
       {!hasStarted ? (
         <div className="relative flex-1 w-full h-full retro-grid-bg flex flex-col items-center justify-between p-4 md:p-8 overflow-y-auto">
-          {/* Capa de líneas CRT */}
           <div className="absolute inset-0 crt-scanlines pointer-events-none z-10" />
 
-          {/* Barra Superior tipo Marquesina de Máquina Arcade */}
           <div className="relative z-20 w-full max-w-4xl flex flex-wrap items-center justify-between gap-2 border-b-2 border-slate-800 pb-3">
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 bg-emerald-400 animate-ping" />
               <span className="font-arcade text-[9px] text-emerald-400 tracking-wider">
-                NOVASOFT ENTERTAINMENT SYSTEM • ROM V2.0
+                NOVASOFT ENTERTAINMENT SYSTEM · ROM V2.0
               </span>
             </div>
             <span className="font-arcade text-[9px] text-amber-300">
-              INSERT COIN • 1UP READY
+              INSERT COIN · 1UP READY
             </span>
           </div>
 
-          {/* Bloque Central: Logo Gigante + Escaparate de Personajes + Botonera Arcade */}
           <div className="relative z-20 max-w-3xl w-full my-auto space-y-6 py-4">
-            
-            {/* Cabecera del Título */}
             <div className="text-center space-y-3">
               <div className="inline-block rpg-box-dark px-4 py-1.5 bg-[#1e293b] border-amber-400">
                 <span className="font-arcade text-[9px] md:text-[10px] text-amber-300 uppercase">
                   ★ RPG DE OFICINA, CÓDIGO & SUPERVIVENCIA EN EQUIPO ★
                 </span>
               </div>
-
               <h1 className="font-arcade text-4xl sm:text-5xl md:text-6xl text-amber-400 arcade-title-shadow tracking-tight leading-none pt-2">
                 SPRINT CERO
               </h1>
-
               <div className="inline-block bg-rose-600 border-2 border-white px-4 py-1 shadow-[4px_4px_0_0_#000]">
                 <span className="font-arcade text-xs md:text-sm text-white tracking-widest">
-                  DEVLIFE RPG • EDICIÓN FINTRACK 2.0
+                  DEVLIFE RPG · EDICIÓN FINTRACK 2.0
                 </span>
               </div>
             </div>
 
-            {/* Escaparate Animado en Vivo de los 6 Personajes de la Oficina */}
             <div className="rpg-box-dark p-4 bg-[#111625]">
               <div className="flex justify-between items-center mb-3 border-b-2 border-slate-800 pb-1.5">
                 <span className="font-arcade text-[8px] text-sky-300">
                   EL EQUIPO DE NOVASOFT SOLUTIONS (SPRITES 16-BIT EN VIVO)
                 </span>
                 <span className="font-arcade text-[8px] text-slate-400">
-                  3 SPRINTS • 6 FINALES
+                  3 SPRINTS · 15 INTERRUPCIONES · 6 FINALES
                 </span>
               </div>
-
               <div className="grid grid-cols-3 sm:grid-cols-6 gap-2.5">
                 {[
                   { key: 'player', name: 'TÚ', role: 'Fullstack', color: 'text-emerald-400', border: 'border-emerald-500/60' },
@@ -331,14 +311,13 @@ export const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Selector de Menú Estilo Consola (Controlable con Flechas ⬆️/⬇️ + ENTER) */}
             <div className="rpg-box-cream p-5 space-y-2.5">
               <div className="flex justify-between items-center border-b-2 border-[#b8ab8e] pb-1.5 mb-2">
                 <span className="font-arcade text-[9px] text-stone-800">
                   SELECCIONA MODO DE JUEGO:
                 </span>
                 <span className="font-arcade text-[8px] text-stone-600">
-                  [⬆️/⬇️] MOVER • [ENTER] ACEPTAR
+                  [▲▼] MOVER · [ENTER] ACEPTAR
                 </span>
               </div>
 
@@ -373,7 +352,6 @@ export const App: React.FC = () => {
                           {item.label}
                         </span>
                       </div>
-
                       <span
                         className={`font-arcade text-[8px] px-2 py-1 border ${
                           isSelected
@@ -389,65 +367,44 @@ export const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Manual de Controles y Contexto Desplegable */}
             {showControlsGuide && (
               <div className="rpg-box-dark p-5 space-y-3 animate-fade-in">
                 <div className="font-arcade text-[10px] text-amber-300 border-b-2 border-slate-700 pb-2">
                   📖 MANUAL DE SUPERVIVENCIA EN NOVASOFT SOLUTIONS
                 </div>
                 <p className="font-dialogue text-xl text-slate-200 leading-snug">
-                  Acabas de entrar como Fullstack Developer para construir <strong>FinTrack 2.0</strong>. 
-                  Completar tus tickets de código en la mesa es vital, pero si descuidas la <strong>Inteligencia Emocional</strong>, 
-                  las <strong>5 C del Trabajo en Equipo</strong> o acumulas <strong>3 Strikes</strong> por procrastinar antes de las 18:00, estarás despedido.
+                  Acabas de entrar como Fullstack Developer para construir <strong>FinTrack 2.0</strong>.
+                  Gestiona las <strong>Daily Stand-ups</strong>, el <strong>Kanban</strong> y las <strong>5 Interrupciones de cada Sprint</strong> equilibrando las <strong>5 C</strong>, la <strong>Afinidad</strong> con el equipo y el <strong>Estrés</strong>.
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 font-arcade text-[9px] text-slate-300">
-                  <div className="bg-slate-900 p-2.5 border border-slate-700">
-                    🕹️ MOVERSE: [WASD] O [FLECHAS]
-                  </div>
-                  <div className="bg-slate-900 p-2.5 border border-slate-700">
-                    💬 INTERACTUAR: [E] O [ESPACIO]
-                  </div>
-                  <div className="bg-slate-900 p-2.5 border border-slate-700">
-                    🎯 ROSCO DIÁLOGOS: [⬅️ / ➡️] + [ENTER]
-                  </div>
-                  <div className="bg-slate-900 p-2.5 border border-slate-700">
-                    🛠️ DEBUG INSPECTOR: TECLA [F2]
-                  </div>
-                </div>
               </div>
             )}
           </div>
 
-          {/* Pie de Página Arcade */}
           <div className="relative z-20 w-full max-w-4xl flex flex-wrap items-center justify-between gap-2 border-t-2 border-slate-800 pt-3 font-arcade text-[8px] text-slate-500">
-            <span>© 2026 NOVASOFT CORP • MOTOR PHASER 3 + REACT PIXEL UI</span>
+            <span>© 2026 NOVASOFT CORP · MOTOR PHASER 3 + REACT PIXEL UI</span>
             <span>PULSA [F2] EN JUEGO PARA MODO DEBUG</span>
           </div>
         </div>
       ) : (
-        <>
-          {/* Contenedor Principal del Lienzo 2D */}
-          <div className="flex-1 w-full h-full relative overflow-hidden">
+        <div className="flex flex-col w-full h-full overflow-hidden">
+          {/* 1. HUD DE ESTADÍSTICAS FIJO EN CABECERA SUPERIOR */}
+          <HUD />
+
+          {/* 2. ESCENARIO 2D Y MODALES DEBAJO DEL HUD (SIN SOLAPARSE) */}
+          <div className="relative flex-1 min-h-0 w-full overflow-hidden">
             <PhaserGame onSceneReady={handleSceneReady} />
-
-            {/* HUD Superior Retro */}
-            <HUD />
-
-            {/* Notificaciones Trampa del Smartphone */}
             <DistractionToast />
+
+            {activeModal === 'DIALOGUE' && <DialogueBox />}
+            {activeModal === 'WORKSTATION' && <WorkstationModal />}
+            {(activeModal === 'SCRUM_BOARD' || activeModal === 'SPRINT_RETRO') && <SprintRetroModal />}
+            {activeModal === 'SKIN_CUSTOMIZER' && <SkinCustomizer />}
+            {activeModal === 'SETTINGS' && <SettingsModal />}
+            {activeModal === 'ENDING' && <EndingScreen />}
           </div>
 
-          {/* Modales Activos (Incluye SPRINT_RETRO corregido) */}
-          {activeModal === 'DIALOGUE' && <DialogueBox />}
-          {activeModal === 'WORKSTATION' && <WorkstationModal />}
-          {(activeModal === 'SCRUM_BOARD' || activeModal === 'SPRINT_RETRO') && <SprintRetroModal />}
-          {activeModal === 'SKIN_CUSTOMIZER' && <SkinCustomizer />}
-          {activeModal === 'SETTINGS' && <SettingsModal />}
-          {activeModal === 'ENDING' && <EndingScreen />}
-
-          {/* Panel F2 Debug Inspector con estética Terminal Retro */}
           {debugPanelOpen && (
-            <div className="fixed bottom-4 left-4 z-50 p-4 rpg-box-dark text-xs max-w-sm w-full space-y-3">
+            <div className="fixed bottom-4 left-4 z-[90] p-4 rpg-box-dark text-xs max-w-sm w-full space-y-3">
               <div className="flex justify-between items-center border-b-2 border-slate-700 pb-2">
                 <span className="font-arcade text-[10px] text-amber-400">🛠️ F2 DEBUG TERMINAL</span>
                 <button
@@ -459,12 +416,14 @@ export const App: React.FC = () => {
               </div>
 
               <div>
-                <span className="font-arcade text-[8px] text-slate-400 block mb-1.5">SALTAR A ESCENA:</span>
+                <span className="font-arcade text-[8px] text-slate-400 block mb-1.5">
+                  SALTAR A DAILY STAND-UP DEL GUIÓN:
+                </span>
                 <div className="grid grid-cols-3 gap-1.5">
                   <button
                     onClick={() => {
                       setSprint(1);
-                      setActiveStoryNode('scene_1_1_daily');
+                      setActiveStoryNode('act1_daily');
                       setActiveModal('DIALOGUE');
                     }}
                     className="rpg-btn p-1.5 font-arcade text-[8px] cursor-pointer"
@@ -474,7 +433,7 @@ export const App: React.FC = () => {
                   <button
                     onClick={() => {
                       setSprint(2);
-                      setActiveStoryNode('scene_2_1_david_scope');
+                      setActiveStoryNode('act2_daily');
                       setActiveModal('DIALOGUE');
                     }}
                     className="rpg-btn p-1.5 font-arcade text-[8px] cursor-pointer"
@@ -484,7 +443,7 @@ export const App: React.FC = () => {
                   <button
                     onClick={() => {
                       setSprint(3);
-                      setActiveStoryNode('scene_3_1_black_friday');
+                      setActiveStoryNode('act3_daily');
                       setActiveModal('DIALOGUE');
                     }}
                     className="rpg-btn p-1.5 font-arcade text-[8px] cursor-pointer"
@@ -496,19 +455,27 @@ export const App: React.FC = () => {
 
               <div className="space-y-2 pt-1 font-arcade text-[9px]">
                 <div className="flex justify-between items-center">
-                  <span>IE ({emotionalIntelligence}%):</span>
+                  <span>PROBAR HUD EN VIVO:</span>
                   <div className="space-x-1">
                     <button
-                      onClick={() => updateIE(-10)}
-                      className="px-2 py-1 bg-rose-700 text-white border border-black cursor-pointer"
-                    >
-                      -10
-                    </button>
-                    <button
-                      onClick={() => updateIE(10)}
+                      onClick={() => {
+                        updateIE(10);
+                        updateStress(-10);
+                        updateAffinities({ elena: 10, marcos: 10 });
+                      }}
                       className="px-2 py-1 bg-emerald-700 text-white border border-black cursor-pointer"
                     >
-                      +10
+                      +STATS
+                    </button>
+                    <button
+                      onClick={() => {
+                        updateIE(-10);
+                        updateStress(15);
+                        updateAffinities({ david: -10, sofia: -10 });
+                      }}
+                      className="px-2 py-1 bg-rose-700 text-white border border-black cursor-pointer"
+                    >
+                      -STATS
                     </button>
                   </div>
                 </div>
@@ -524,20 +491,20 @@ export const App: React.FC = () => {
                 </div>
 
                 <div className="flex justify-between items-center">
-                  <span>BOOST 5 C:</span>
+                  <span>BOOST 5 C ({emotionalIntelligence}%):</span>
                   <button
                     onClick={() =>
                       updateFiveC({
-                        compromiso: 20,
-                        confianza: 20,
-                        coordinacion: 20,
-                        comunicacion: 20,
-                        complementariedad: 20,
+                        compromiso: 15,
+                        confianza: 15,
+                        coordinacion: 15,
+                        comunicacion: 15,
+                        complementariedad: 15,
                       })
                     }
                     className="px-2 py-1 bg-amber-500 text-stone-950 border border-black cursor-pointer"
                   >
-                    +20 TODAS
+                    +15 TODAS
                   </button>
                 </div>
               </div>
@@ -552,12 +519,12 @@ export const App: React.FC = () => {
                   }}
                   className="rpg-btn w-full py-1.5 font-arcade text-[8px] bg-amber-300 text-stone-950 cursor-pointer"
                 >
-                  ⏪ VOLVER AL MENÚ DE TÍTULO
+                  VOLVER AL MENÚ DE TÍTULO
                 </button>
               </div>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );
